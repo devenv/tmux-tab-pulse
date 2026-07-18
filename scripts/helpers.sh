@@ -93,3 +93,69 @@ word_in_list() {
   done
   return 1
 }
+
+# Priority scale shared by daemon.sh's bulk aggregator and the single-window
+# helper below: 5=claude-working 4=claude-attention 3=process 2=claude-idle
+# 1=idle. Higher wins when aggregating panes within one window.
+
+# tab_pulse_priority_for_claude_state <state>
+tab_pulse_priority_for_claude_state() {
+  case "$1" in
+  working) printf '5' ;;
+  attention) printf '4' ;;
+  *) printf '2' ;; # any other/unknown Claude state = claude-idle
+  esac
+}
+
+# tab_pulse_priority_for_process <cmd>
+tab_pulse_priority_for_process() {
+  local cmd="$1"
+  if tab_pulse_process_detection_enabled \
+    && ! word_in_list "$cmd" "$(tab_pulse_shells)" \
+    && ! word_in_list "$cmd" "$(tab_pulse_ignore_commands)"; then
+    printf '3'
+  else
+    printf '1'
+  fi
+}
+
+# tab_pulse_window_priority <window_id>
+# Aggregates every pane currently in <window_id> into a single priority
+# number. Used for the immediate, single-window push from claude-state.sh —
+# cheap enough there since it only ever scopes to one window's panes, unlike
+# the daemon's server-wide sweep.
+tab_pulse_window_priority() {
+  local win="$1" best=1 cmd state pr
+  while IFS=$'\t' read -r cmd state; do
+    [ -n "$cmd" ] || continue
+    if [ -n "$state" ]; then
+      pr="$(tab_pulse_priority_for_claude_state "$state")"
+    else
+      pr="$(tab_pulse_priority_for_process "$cmd")"
+    fi
+    [ "$pr" -gt "$best" ] && best="$pr"
+  done < <(tmux list-panes -t "$win" -F $'#{pane_current_command}\t#{@tab_pulse_state}' 2>/dev/null)
+  printf '%s' "$best"
+}
+
+# tab_pulse_glyph_for_priority <priority> [working-glyph]
+# [working-glyph] lets a caller with an animated frame counter (daemon.sh)
+# pass the current frame; callers without one (claude-state.sh's one-off
+# instant push) get the first spinner frame as a static placeholder — the
+# daemon's own next tick takes over animating it.
+tab_pulse_glyph_for_priority() {
+  local pr="$1" working_glyph="${2:-}"
+  case "$pr" in
+  5)
+    if [ -z "$working_glyph" ]; then
+      local frames
+      read -r -a frames <<<"$(tab_pulse_spinner_frames)"
+      working_glyph="${frames[0]:-*}"
+    fi
+    printf '%s%s#[default]' "$(tab_pulse_working_style)" "$working_glyph"
+    ;;
+  4) printf '%s%s#[default]' "$(tab_pulse_attention_style)" "$(tab_pulse_attention_glyph)" ;;
+  3) printf '%s%s#[default]' "$(tab_pulse_process_style)" "$(tab_pulse_process_glyph)" ;;
+  *) printf '%s' "$(tab_pulse_idle_glyph)" ;;
+  esac
+}

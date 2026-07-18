@@ -48,7 +48,12 @@ if ! acquire_lock; then
   exit 0
 fi
 cleanup() { rm -rf "$LOCKDIR" 2>/dev/null; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# A bare `trap cleanup INT TERM` would run cleanup but NOT stop the script —
+# bash resumes after the handler unless it exits explicitly, which would
+# delete this daemon's own lock while it kept looping (and let a second
+# instance start alongside it). Exiting here fires the EXIT trap too.
+trap 'exit 0' INT TERM
 
 # --- spinner setup -----------------------------------------------------------
 # Frames are space-separated (not one contiguous string) so we can split them
@@ -61,19 +66,8 @@ if [ "$frame_count" -eq 0 ]; then
 fi
 frame_index=0
 
-# glyph_for_priority <priority>
-# priority: 5=claude-working 4=claude-attention 3=process 2=claude-idle 1=idle
-glyph_for_priority() {
-  case "$1" in
-  5) printf '%s%s#[default]' "$(tab_pulse_working_style)" "${FRAMES[$frame_index]}" ;;
-  4) printf '%s%s#[default]' "$(tab_pulse_attention_style)" "$(tab_pulse_attention_glyph)" ;;
-  3) printf '%s%s#[default]' "$(tab_pulse_process_style)" "$(tab_pulse_process_glyph)" ;;
-  *) printf '%s' "$(tab_pulse_idle_glyph)" ;;
-  esac
-}
-
 while true; do
-  panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_current_command}\t#{@tab_pulse_state}' 2>/dev/null)"
+  panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}' 2>/dev/null)"
   if [ $? -ne 0 ]; then
     # tmux server is gone (or unreachable) — nothing left to serve.
     break
@@ -85,15 +79,24 @@ while true; do
 
   # Aggregate per window_id -> max priority pane. Done in one awk pass rather
   # than nested bash loops (cheap even with many panes, and bash-3.2-safe
-  # since it avoids associative arrays entirely).
+  # since it avoids associative arrays entirely). Also flags "CLEAR" panes:
+  # ones that still carry a Claude @tab_pulse_state but whose foreground
+  # command has reverted to a plain shell — meaning Claude exited without
+  # ever firing SessionEnd (e.g. killed, Ctrl-C'd) and left a stale state
+  # behind. Those get their pane option unset below so they stop being
+  # treated as a Claude pane, and count as idle/process for this tick.
   aggregated="$(printf '%s\n' "$panes" | awk -F $'\t' -v shells="$shells" -v ignores="$ignores" -v detect="$detect" '
     BEGIN {
       n = split(shells, sh, " ");  for (i = 1; i <= n; i++) is_shell[sh[i]] = 1
       m = split(ignores, ig, " "); for (i = 1; i <= m; i++) is_ignore[ig[i]] = 1
     }
-    NF < 2 { next }
+    NF < 3 { next }
     {
-      win = $1; cmd = $2; state = (NF >= 3 ? $3 : "")
+      win = $1; paneid = $2; cmd = $3; state = (NF >= 4 ? $4 : "")
+      if (state != "" && (cmd in is_shell)) {
+        print "CLEAR\t" paneid
+        state = ""
+      }
       pr = 1
       if (state != "") {
         if (state == "working")        pr = 5
@@ -105,16 +108,25 @@ while true; do
       if (!(win in maxpr) || pr > maxpr[win]) maxpr[win] = pr
     }
     END {
-      for (w in maxpr) print w "\t" maxpr[w]
+      for (w in maxpr) print "WIN\t" w "\t" maxpr[w]
     }
   ')"
 
   any_working=0
-  while IFS=$'\t' read -r win pr; do
-    [ -n "$win" ] || continue
-    [ "$pr" = "5" ] && any_working=1
-    glyph="$(glyph_for_priority "$pr")"
-    tmux set-option -w -t "$win" @tab_pulse "$glyph" >/dev/null 2>&1
+  while IFS=$'\t' read -r kind a b; do
+    case "$kind" in
+    CLEAR)
+      tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1
+      ;;
+    WIN)
+      win="$a"
+      pr="$b"
+      [ -n "$win" ] || continue
+      [ "$pr" = "5" ] && any_working=1
+      glyph="$(tab_pulse_glyph_for_priority "$pr" "${FRAMES[$frame_index]}")"
+      tmux set-option -w -t "$win" @tab_pulse "$glyph" >/dev/null 2>&1
+      ;;
+    esac
   done <<<"$aggregated"
 
   tmux refresh-client -S >/dev/null 2>&1
