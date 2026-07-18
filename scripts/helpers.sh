@@ -20,16 +20,19 @@ tmux_get() {
 }
 
 # Cadence (milliseconds), converted to seconds (with fraction) for `sleep`.
+# Clamped to a 50ms floor: a non-numeric or negative @tab-pulse-* value would
+# otherwise become a 0-length sleep (awk coerces non-numeric strings to 0 in
+# numeric context) and busy-loop the daemon at effectively 100% CPU.
 tab_pulse_interval_seconds() {
   local ms
   ms="$(tmux_get '@tab-pulse-interval' '500')"
-  awk -v ms="$ms" 'BEGIN { printf "%.3f", ms / 1000 }'
+  awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
 }
 
 tab_pulse_idle_interval_seconds() {
   local ms
   ms="$(tmux_get '@tab-pulse-idle-interval' '2000')"
-  awk -v ms="$ms" 'BEGIN { printf "%.3f", ms / 1000 }'
+  awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
 }
 
 # Spinner frames, SPACE-SEPARATED (not one contiguous string) so the daemon

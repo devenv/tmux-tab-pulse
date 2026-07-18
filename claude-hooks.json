@@ -2,7 +2,6 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "*",
         "hooks": [
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["idle"] }
         ]
@@ -10,7 +9,6 @@
     ],
     "UserPromptSubmit": [
       {
-        "matcher": "*",
         "hooks": [
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["working"] }
         ]
@@ -18,7 +16,6 @@
     ],
     "Stop": [
       {
-        "matcher": "*",
         "hooks": [
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["attention"] }
         ]
@@ -46,7 +43,6 @@
     ],
     "SessionEnd": [
       {
-        "matcher": "*",
         "hooks": [
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["clear"] }
         ]

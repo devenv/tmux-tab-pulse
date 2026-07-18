@@ -28,9 +28,26 @@ another pane, Claude's status wins.
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks) push state
   ("working" / "attention" / "idle") onto whichever pane Claude is running
   in, via `$TMUX_PANE`. This is optional — the plugin works for plain
-  processes with zero Claude Code integration.
+  processes with zero Claude Code integration. The hook script also pushes an
+  immediate update itself the moment a hook fires, rather than waiting on the
+  daemon's own poll — otherwise a fast turn could start and finish inside one
+  idle-cadence gap and never visibly show as `working` at all.
+- **Self-heals stale state**: if Claude exits without ever firing its
+  `SessionEnd` hook (killed, Ctrl-C'd, crashed), a pane can be left with a
+  stuck `attention`/`working` marker and no more hooks left to clear it. The
+  daemon notices when a pane still carries Claude state but its foreground
+  command has reverted to a plain shell, and clears it automatically within
+  one tick.
 - Everything is a tmux option (`@tab-pulse-*`), so you can restyle glyphs,
   change the animation speed, or turn parts off without editing any script.
+
+> **Note:** without the hooks installed, tmux can't tell "Claude Code is
+> sitting idle at its prompt" apart from "a process is running" — it'll show
+> the static process marker (`▪`) for an idle Claude REPL, same as any other
+> non-shell command, since tmux reports Claude Code's `pane_current_command`
+> as its version string (e.g. `2.1.214`), not `claude`. Installing the hooks
+> is what lets tmux-tab-pulse distinguish Claude's actual working/attention
+> states from "just some process is running".
 
 ## Install
 
@@ -61,10 +78,12 @@ the plugin's hooks into Claude Code's settings:
 
 This appends entries to `~/.claude/settings.json` (backing up the original
 first) for `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, and
-`SessionEnd`. It's safe to re-run — it detects it's already installed and
-does nothing. Without this step, tmux-tab-pulse still shows the static
-process marker for any other running command; it just won't know anything
-about Claude specifically.
+`SessionEnd`. It's safe to re-run — idempotent per event, not just
+all-or-nothing: if you (or something else) later remove just one or two of
+these hooks by hand, re-running restores only what's missing rather than
+seeing anything and doing nothing. Without this step, tmux-tab-pulse still
+shows the static process marker for any other running command; it just
+won't know anything about Claude specifically.
 
 > **Note:** this writes to the *live* Claude Code settings file
 > (`~/.claude/settings.json` by default — override with
@@ -74,15 +93,20 @@ about Claude specifically.
 
 ## Options
 
-All are `tmux set -g <option> <value>` (or in `.tmux.conf` before/after
-loading the plugin — options are read live by the daemon on every tick, so
-changes take effect within one tick, no reload needed).
+All are `tmux set -g <option> <value>`. Most are read live by the daemon on
+its next tick (≤ `@tab-pulse-idle-interval`, or the current spinner tick if
+one's mid-run), so most changes just take effect on their own. Three are
+read only ONCE, at plugin load time, and need a reload (`prefix + I`,
+`tmux source ~/.tmux.conf`, or a restart) to pick up a change — marked below.
+`@tab-pulse-interval`/`@tab-pulse-idle-interval` are clamped to a 50ms floor
+regardless of what you set (a non-numeric or too-low value would otherwise
+busy-loop the daemon).
 
 | Option | Default | Meaning |
 |---|---|---|
 | `@tab-pulse-interval` | `500` | Tick length in ms while anything is in the `working` state (drives spinner animation speed). |
 | `@tab-pulse-idle-interval` | `2000` | Tick length in ms when nothing is working (still needs to catch processes starting/stopping and Claude turns finishing). |
-| `@tab-pulse-spinner` | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. |
+| `@tab-pulse-spinner` *(load-time only)* | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. Read once into the daemon's frame list at startup. |
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
 | `@tab-pulse-attention-glyph` | `●` | Glyph shown when Claude has finished / needs you. |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
@@ -92,8 +116,8 @@ changes take effect within one tick, no reload needed).
 | `@tab-pulse-process-detection` | `on` | Set to `off` to disable the plain-process marker entirely (Claude-only mode). |
 | `@tab-pulse-ignore-commands` | `nvim vim vi less more man htop btop top fzf tig lazygit bat delta` | Space-separated `pane_current_command` values that should *not* count as "a process running" (interactive TUIs). |
 | `@tab-pulse-shells` | `zsh bash sh fish -zsh -bash -sh -fish` | Space-separated commands treated as "just a shell prompt", i.e. never a process. |
-| `@tab-pulse-name-format` | `#I:#W` | The window-name portion tmux-tab-pulse builds its format string around. |
-| `@tab-pulse-manual` | `off` | Set to `on` to stop tmux-tab-pulse from touching `window-status-format` — place `#{@tab_pulse}` yourself wherever you like in your own format string. |
+| `@tab-pulse-name-format` *(load-time only)* | `#I:#W` | The window-name portion tmux-tab-pulse builds its format string around. |
+| `@tab-pulse-manual` *(load-time only)* | `off` | Set to `on` to stop tmux-tab-pulse from touching `window-status-format` — place `#{@tab_pulse}` yourself wherever you like in your own format string. |
 
 ## Precedence
 
@@ -108,6 +132,20 @@ A working or awaiting-you Claude pane always wins over a sibling process pane.
 A Claude pane that's merely idle, though, yields to a genuinely running
 process in another pane — so a dev server in a split still surfaces instead
 of being masked by a quiet Claude prompt.
+
+## Known limitations
+
+- **Suspending Claude (Ctrl-Z)** briefly looks like it exited: the pane's
+  foreground command reverts to your shell while suspended, which the
+  self-heal (see below) treats the same as "Claude exited without cleanup"
+  and clears its state within one tick. `fg` doesn't restore it — the
+  indicator stays blank until the next hook fires (next prompt, or you quit
+  Claude). Self-limiting and rare enough not to be worth the extra
+  cross-tick state tracking a fix would need.
+- With more than one client attached to the same session, only the
+  attached client(s) tmux's `refresh-client -S` reaches are guaranteed to
+  redraw immediately; in the worst case a less-active client could lag up to
+  `status-interval` (tmux's own default: 15s) behind.
 
 ## Requirements
 

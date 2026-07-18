@@ -34,11 +34,19 @@ start_daemon() {
   tmux run-shell -b "$CURRENT_DIR/scripts/daemon.sh"
 }
 
+arm_restart_hook() {
+  # Re-arm the daemon on every new session in case it died unexpectedly (a
+  # crash, an OOM kill, ...) while the server itself kept running — the
+  # single-instance lock makes this a no-op whenever a daemon is already
+  # alive. `set-hook -ga` appends unconditionally, so re-sourcing this file
+  # (`prefix + I`, a config reload) would otherwise register another
+  # identical entry every time; skip it if one's already registered.
+  if tmux show-hooks -g 2>/dev/null | grep -qF "$CURRENT_DIR/scripts/daemon.sh"; then
+    return 0
+  fi
+  tmux set-hook -ga session-created "run-shell -b '$CURRENT_DIR/scripts/daemon.sh'"
+}
+
 wire_status_format
 start_daemon
-
-# Re-arm the daemon whenever a new tmux server-level session is created after
-# this one dies out (e.g. `tmux kill-server` then a fresh `tmux new`) — the
-# lock directory is cleaned up on exit so this is a no-op if one is already
-# running.
-tmux set-hook -ga session-created "run-shell -b '$CURRENT_DIR/scripts/daemon.sh'"
+arm_restart_hook

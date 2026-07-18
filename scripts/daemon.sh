@@ -21,7 +21,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --- single-instance guard --------------------------------------------------
 # `mkdir` is atomic even across processes racing to start at the same time,
 # unlike a naive "read pidfile, then write pidfile" check.
-LOCKDIR="${TMPDIR:-/tmp}/tmux-tab-pulse-$(id -u).lock"
+#
+# Keyed by the tmux SOCKET, not just the user: `run-shell -b` inherits $TMUX
+# (set by tmux to "socketpath,pid,session"), so a daemon started against one
+# server won't wrongly hold (or lose the race for) the lock belonging to a
+# different tmux server run by the same user.
+socket_path="${TMUX%%,*}"
+if [ -z "$socket_path" ]; then
+  socket_path="$(tmux display-message -p '#{socket_path}' 2>/dev/null)"
+fi
+lock_key="$(printf '%s' "${socket_path:-default}" | tr -c 'A-Za-z0-9' '_')"
+LOCKDIR="${TMPDIR:-/tmp}/tmux-tab-pulse-$(id -u)-${lock_key}.lock"
 
 acquire_lock() {
   if mkdir "$LOCKDIR" 2>/dev/null; then
@@ -31,6 +41,13 @@ acquire_lock() {
 
   local existing_pid
   existing_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+  if [ -z "$existing_pid" ]; then
+    # The lock dir exists but its pid file is empty — likely just a narrow
+    # window where another process mkdir'd it a moment ago and hasn't
+    # written its pid yet. Give it a beat before assuming it's abandoned.
+    sleep 0.1
+    existing_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+  fi
   if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
     return 1 # another daemon is genuinely running
   fi
