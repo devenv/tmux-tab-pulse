@@ -9,7 +9,12 @@
 
 set -u
 
-CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `pwd -P` (not plain `pwd`) resolves symlinks to a canonical path: this repo
+# is commonly reached through more than one path (e.g. a real clone AND a
+# `~/.tmux/plugins/...` symlink TPM expects), and without canonicalizing,
+# arm_restart_hook's dedup check below would treat the same daemon reached
+# via each path as two different entries and register it twice.
+CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./scripts/helpers.sh
 . "$CURRENT_DIR/scripts/helpers.sh"
 

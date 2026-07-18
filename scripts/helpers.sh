@@ -26,13 +26,13 @@ tmux_get() {
 tab_pulse_interval_seconds() {
   local ms
   ms="$(tmux_get '@tab-pulse-interval' '500')"
-  awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
+  LC_ALL=C awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
 }
 
 tab_pulse_idle_interval_seconds() {
   local ms
   ms="$(tmux_get '@tab-pulse-idle-interval' '2000')"
-  awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
+  LC_ALL=C awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
 }
 
 # Spinner frames, SPACE-SEPARATED (not one contiguous string) so the daemon
@@ -86,6 +86,22 @@ tab_pulse_shells() {
 tab_pulse_ignore_commands() {
   tmux_get '@tab-pulse-ignore-commands' \
     'nvim vim vi less more man htop btop top fzf tig lazygit bat delta'
+}
+
+# tab_pulse_lock_dir
+# The daemon's single-instance lock directory for the CURRENT tmux server,
+# keyed by socket path (not just uid) so independent tmux servers run by the
+# same user each get their own daemon rather than racing for one lock. Its
+# pid file lets other scripts (claude-state.sh) find the running daemon to
+# signal it directly, without needing to know its PID in advance.
+tab_pulse_lock_dir() {
+  local socket_path="${TMUX%%,*}"
+  if [ -z "$socket_path" ]; then
+    socket_path="$(tmux display-message -p '#{socket_path}' 2>/dev/null)"
+  fi
+  local lock_key
+  lock_key="$(printf '%s' "${socket_path:-default}" | tr -c 'A-Za-z0-9' '_')"
+  printf '%s' "${TMPDIR:-/tmp}/tmux-tab-pulse-$(id -u)-${lock_key}.lock"
 }
 
 # word_in_list <word> <space-separated-list>

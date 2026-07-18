@@ -17,8 +17,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 STATE_SCRIPT="$SCRIPT_DIR/claude-state.sh"
 TEMPLATE="$REPO_DIR/claude-hooks.json"
 SETTINGS="${CLAUDE_SETTINGS_PATH:-$HOME/.claude/settings.json}"

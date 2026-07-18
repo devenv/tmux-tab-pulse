@@ -29,9 +29,13 @@ another pane, Claude's status wins.
   ("working" / "attention" / "idle") onto whichever pane Claude is running
   in, via `$TMUX_PANE`. This is optional — the plugin works for plain
   processes with zero Claude Code integration. The hook script also pushes an
-  immediate update itself the moment a hook fires, rather than waiting on the
-  daemon's own poll — otherwise a fast turn could start and finish inside one
-  idle-cadence gap and never visibly show as `working` at all.
+  immediate update itself the moment a hook fires — showing the correct glyph
+  right away — and wakes the daemon (a `SIGUSR1` to its own pid, found via
+  its lock file) so it takes over animating subsequent frames immediately
+  instead of sitting out the rest of whatever idle-cadence sleep it happened
+  to be in. Without this, a turn could start and finish before the daemon's
+  own poll ever noticed it, or the spinner could sit frozen on its first
+  frame for up to `@tab-pulse-idle-interval`.
 - **Self-heals stale state**: if Claude exits without ever firing its
   `SessionEnd` hook (killed, Ctrl-C'd, crashed), a pane can be left with a
   stuck `attention`/`working` marker and no more hooks left to clear it. The
