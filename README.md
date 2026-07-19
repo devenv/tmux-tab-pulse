@@ -6,9 +6,9 @@ It answers one question at a glance, per tab, without switching into it: *is
 anything happening here?*
 
 ```
-myrepo         idle — nothing going on
+myrepo         idle — nothing going on (also: Claude just finished, nothing pending)
 myrepo ⠹       Claude Code is working (animated spinner)
-myrepo ●       Claude Code finished and is waiting on you (red, alarming)
+myrepo ●       Claude Code genuinely needs you — a permission prompt or a question (red, alarming)
 myrepo ▪       a plain process is still running (script, dev server, …)
 ```
 
@@ -36,6 +36,15 @@ another pane, Claude's status wins.
   to be in. Without this, a turn could start and finish before the daemon's
   own poll ever noticed it, or the spinner could sit frozen on its first
   frame for up to `@tab-pulse-idle-interval`.
+- **Red means a genuine ask, not just "a turn ended"**: `Stop` (Claude
+  finishing a response) maps to `idle`, not `attention` — a turn that just
+  completes with nothing further needed goes blank, not red. Only
+  `Notification`'s `permission_prompt`/`idle_prompt`/`agent_needs_input`
+  matchers — which specifically mean Claude is waiting on you for something
+  — turn the marker red. (An earlier version mapped `Stop` straight to
+  `attention`, so any pane you hadn't glanced at since its last turn stayed
+  alarmingly red indefinitely, regardless of whether anything was actually
+  pending.)
 - **Self-heals stale state**: if Claude exits without ever firing its
   `SessionEnd` hook (killed, Ctrl-C'd, crashed), a pane can be left with a
   stuck `attention`/`working` marker and no more hooks left to clear it. The
@@ -73,8 +82,8 @@ run '~/path/to/tmux-tab-pulse/tab-pulse.tmux'
 
 ### Claude Code integration (optional, one-time)
 
-To get the animated "working" spinner and the red "your turn" marker, register
-the plugin's hooks into Claude Code's settings:
+To get the animated "working" spinner and the red "genuinely needs you"
+marker, register the plugin's hooks into Claude Code's settings:
 
 ```sh
 ~/path/to/tmux-tab-pulse/scripts/install-claude-hooks.sh
@@ -112,7 +121,7 @@ busy-loop the daemon).
 | `@tab-pulse-idle-interval` | `2000` | Tick length in ms when nothing is working (still needs to catch processes starting/stopping and Claude turns finishing). |
 | `@tab-pulse-spinner` *(load-time only)* | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. Read once into the daemon's frame list at startup. |
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
-| `@tab-pulse-attention-glyph` | `●` | Glyph shown when Claude has finished / needs you. |
+| `@tab-pulse-attention-glyph` | `●` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
 | `@tab-pulse-process-glyph` | `▪` | Glyph shown for a plain running process. |
 | `@tab-pulse-process-style` | `#[fg=colour39]` | Style for the process glyph. |
