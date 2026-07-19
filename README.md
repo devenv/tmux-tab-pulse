@@ -9,7 +9,7 @@ anything happening here?*
 myrepo         idle — nothing going on (also: Claude just finished, nothing pending)
 myrepo ⠹       Claude Code is working (animated spinner)
 myrepo ●       Claude Code genuinely needs you — a permission prompt or a question (red, alarming)
-myrepo ▪       a plain process is still running (script, dev server, …)
+myrepo ●       a plain process is still running (script, dev server, …) — light yellow
 ```
 
 The cell is always reserved — the tab's width never changes as it switches
@@ -56,7 +56,7 @@ another pane, Claude's status wins.
 
 > **Note:** without the hooks installed, tmux can't tell "Claude Code is
 > sitting idle at its prompt" apart from "a process is running" — it'll show
-> the static process marker (`▪`) for an idle Claude REPL, same as any other
+> the static process marker (`●`, light yellow) for an idle Claude REPL, same as any other
 > non-shell command, since tmux reports Claude Code's `pane_current_command`
 > as its version string (e.g. `2.1.214`), not `claude`. Installing the hooks
 > is what lets tmux-tab-pulse distinguish Claude's actual working/attention
@@ -123,8 +123,8 @@ busy-loop the daemon).
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
 | `@tab-pulse-attention-glyph` | `●` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
-| `@tab-pulse-process-glyph` | `▪` | Glyph shown for a plain running process. |
-| `@tab-pulse-process-style` | `#[fg=colour39]` | Style for the process glyph. |
+| `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (same shape as attention, distinguished by color). |
+| `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
 | `@tab-pulse-idle-glyph` | ` ` (space) | What renders in the reserved cell when idle. |
 | `@tab-pulse-process-detection` | `on` | Set to `off` to disable the plain-process marker entirely (Claude-only mode). |
 | `@tab-pulse-ignore-commands` | `nvim vim vi less more man htop btop top fzf tig lazygit bat delta` | Space-separated `pane_current_command` values that should *not* count as "a process running" (interactive TUIs). |

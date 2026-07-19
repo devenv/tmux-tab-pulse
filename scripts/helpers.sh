@@ -57,11 +57,11 @@ tab_pulse_attention_style() {
 }
 
 tab_pulse_process_glyph() {
-  tmux_get '@tab-pulse-process-glyph' '▪'
+  tmux_get '@tab-pulse-process-glyph' '●'
 }
 
 tab_pulse_process_style() {
-  tmux_get '@tab-pulse-process-style' '#[fg=colour39]'
+  tmux_get '@tab-pulse-process-style' '#[fg=colour229]'
 }
 
 tab_pulse_idle_glyph() {
