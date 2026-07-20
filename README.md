@@ -8,7 +8,7 @@ anything happening here?*
 ```
 myrepo         idle — nothing going on (also: Claude just finished, nothing pending)
 myrepo ⠹       Claude Code is working (animated spinner)
-myrepo ●       Claude Code genuinely needs you — a permission prompt or a question (red, alarming)
+myrepo ⚠       Claude Code genuinely needs you — a permission prompt or a question (red, alarming)
 myrepo ●       a plain process is still running (script, dev server, …) — light yellow
 ```
 
@@ -121,9 +121,9 @@ busy-loop the daemon).
 | `@tab-pulse-idle-interval` | `2000` | Tick length in ms when nothing is working (still needs to catch processes starting/stopping and Claude turns finishing). |
 | `@tab-pulse-spinner` *(load-time only)* | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. Read once into the daemon's frame list at startup. |
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
-| `@tab-pulse-attention-glyph` | `●` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
+| `@tab-pulse-attention-glyph` | `⚠` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
-| `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (same shape as attention, distinguished by color). |
+| `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (distinct shape from attention's `⚠`). |
 | `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
 | `@tab-pulse-idle-glyph` | ` ` (space) | What renders in the reserved cell when idle. |
 | `@tab-pulse-process-detection` | `on` | Set to `off` to disable the plain-process marker entirely (Claude-only mode). |

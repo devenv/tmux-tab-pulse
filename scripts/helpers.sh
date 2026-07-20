@@ -49,7 +49,7 @@ tab_pulse_working_style() {
 }
 
 tab_pulse_attention_glyph() {
-  tmux_get '@tab-pulse-attention-glyph' '●'
+  tmux_get '@tab-pulse-attention-glyph' '⚠'
 }
 
 tab_pulse_attention_style() {
