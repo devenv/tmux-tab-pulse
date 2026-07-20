@@ -8,8 +8,8 @@ anything happening here?*
 ```
 myrepo         idle — nothing going on (also: Claude just finished, nothing pending)
 myrepo ⠹       Claude Code is working (animated spinner)
-myrepo ⚠       Claude Code genuinely needs you — a permission prompt or a question (red, alarming)
-myrepo ●       a plain process is still running (script, dev server, …) — light yellow
+myrepo ⚠       Claude Code needs you — a permission prompt or a question (red, alarming)
+myrepo ●       a plain process is running (script, dev server, …) — light yellow
 ```
 
 The cell is always reserved — the tab's width never changes as it switches
