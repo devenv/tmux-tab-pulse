@@ -39,12 +39,16 @@ another pane, Claude's status wins.
 - **Red means a genuine ask, not just "a turn ended"**: `Stop` (Claude
   finishing a response) maps to `idle`, not `attention` — a turn that just
   completes with nothing further needed goes blank, not red. Only
-  `Notification`'s `permission_prompt`/`idle_prompt`/`agent_needs_input`
-  matchers — which specifically mean Claude is waiting on you for something
-  — turn the marker red. (An earlier version mapped `Stop` straight to
-  `attention`, so any pane you hadn't glanced at since its last turn stayed
-  alarmingly red indefinitely, regardless of whether anything was actually
-  pending.)
+  `Notification`'s `permission_prompt`/`agent_needs_input` matchers — which
+  specifically mean Claude is blocked waiting on you for something — turn the
+  marker red. (An earlier version also mapped `Stop` straight to `attention`,
+  so any pane you hadn't glanced at since its last turn stayed alarmingly red
+  indefinitely, regardless of whether anything was actually pending. A later
+  version added `idle_prompt` to the same list, which turned out to be just
+  as wrong in a subtler way: that notification fires whenever Claude Code
+  notices a session has been sitting idle, i.e. on ordinary finished turns —
+  not on a genuine block — so it re-created the same false-red problem
+  `Stop`'s removal had already fixed.)
 - **Self-heals stale state**: if Claude exits without ever firing its
   `SessionEnd` hook (killed, Ctrl-C'd, crashed), a pane can be left with a
   stuck `attention`/`working` marker and no more hooks left to clear it. The

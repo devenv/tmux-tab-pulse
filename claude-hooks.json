@@ -23,12 +23,6 @@
     ],
     "Notification": [
       {
-        "matcher": "idle_prompt",
-        "hooks": [
-          { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["attention"] }
-        ]
-      },
-      {
         "matcher": "agent_needs_input",
         "hooks": [
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["attention"] }
