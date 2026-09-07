@@ -44,10 +44,7 @@ run_claude_state() {
   [[ "$result" == *"$(tab_pulse_attention_glyph)"* ]]
 }
 
-@test "pushing 'done' (Stop) immediately publishes the done glyph, since nobody's attached to see it" {
-  # This harness's sessions are always created detached and never attached
-  # to a real client — session_attached is genuinely 0, exactly like Claude
-  # finishing a turn while nobody is looking at that window.
+@test "pushing 'done' (Stop) immediately publishes the done glyph" {
   run run_claude_state done
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
@@ -81,6 +78,49 @@ run_claude_state() {
   # No window option should have been created at all.
   run tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse
   [ "$status" -ne 0 ]
+}
+
+@test "agent_start increments the subagent counter without touching the main state" {
+  run_claude_state working
+  run run_claude_state agent_start
+  [ "$status" -eq 0 ]
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents)" = "1" ]
+  # Main state must be untouched by a subagent event.
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_state)" = "working" ]
+}
+
+@test "agent_start then agent_stop returns the counter to 0" {
+  run_claude_state agent_start
+  run_claude_state agent_start
+  run run_claude_state agent_stop
+  [ "$status" -eq 0 ]
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents)" = "1" ]
+  run_claude_state agent_stop
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents)" = "0" ]
+}
+
+@test "an extra agent_stop never drives the counter negative" {
+  run run_claude_state agent_stop
+  [ "$status" -eq 0 ]
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents)" = "0" ]
+}
+
+@test "a running subagent publishes the agent-count glyph, overriding a stale done state" {
+  # Regression test: the exact bug reported live (a session's main turn
+  # already Stopped while a Task-tool subagent it spawned is still running).
+  run_claude_state done
+  run run_claude_state agent_start
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_agent_glyph)1"* ]]
+  [[ "$result" != *"$(tab_pulse_done_glyph)"* ]]
+}
+
+@test "SessionEnd (clear) resets the subagent counter too" {
+  run_claude_state agent_start
+  run run_claude_state clear
+  [ "$status" -eq 0 ]
+  count="$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents 2>/dev/null || true)"
+  [ -z "$count" ]
 }
 
 @test "a second UserPromptSubmit after Stop refreshes the timestamp forward" {

@@ -40,8 +40,15 @@ run_claude_state() {
   # unset the option it would have written, so only the daemon's OWN next
   # tick can be what puts the glyph back.
   tab_pulse_tmux set-option -wu -t "$TEST_WINDOW" @tab_pulse
-  sleep 0.3
-  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  # Poll rather than pin to one fixed sleep — real per-tick cost (~10-20
+  # tmux subprocess calls, no batching) varies with how many options are
+  # configured, so a single fixed window is inherently timing-fragile.
+  result=""
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.3
+    result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse 2>/dev/null || true)"
+    [ -n "$result" ] && break
+  done
   # Not pinned to frame 1 specifically — the daemon's own animation may
   # already have advanced past it by the time this checks. Any spinner
   # frame is proof the daemon (not claude-state.sh's one-off push, which we
@@ -53,13 +60,22 @@ run_claude_state() {
 
 @test "the spinner actually animates across ticks (not frozen on frame one)" {
   run_claude_state working
-  sleep 0.2
   frame1="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
-  sleep 0.3
-  frame2="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [ -n "$frame1" ]
-  [ -n "$frame2" ]
-  [ "$frame1" != "$frame2" ]
+  # Poll rather than pin to fixed sleeps: real per-tick cost (~10-20 tmux
+  # subprocess calls, no batching) varies with how many options are
+  # configured, so a fixed short window is inherently timing-fragile — this
+  # only needs to see ANY later frame differ, however many ticks that takes.
+  changed=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.3
+    frame2="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+    if [ -n "$frame2" ] && [ "$frame2" != "$frame1" ]; then
+      changed=1
+      break
+    fi
+  done
+  [ "$changed" -eq 1 ]
 }
 
 @test "the daemon reverts to idle shortly after Stop" {
@@ -71,7 +87,7 @@ run_claude_state() {
   [[ "$result" != *"$(tab_pulse_spinner_frames | cut -d' ' -f1)"* ]]
 }
 
-@test "the daemon shows done (finished, unseen) after Stop, and keeps it — nobody's attached to see it" {
+@test "the daemon shows done (finished, unseen) after Stop, and keeps it" {
   run_claude_state working
   sleep 0.2
   run_claude_state done
@@ -79,11 +95,30 @@ run_claude_state() {
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
   # It must persist across the daemon's own later ticks too, not just the
-  # instant of claude-state.sh's own push — this test's tmux session is
-  # never attached, so nothing should ever downgrade it on its own.
+  # instant of claude-state.sh's own push — nothing should downgrade it on
+  # its own; only a fresh state change (a new prompt, or the session ending)
+  # supersedes "done".
   sleep 0.5
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+}
+
+@test "the real daemon shows the agent-count glyph while a subagent is running, overriding done" {
+  # End-to-end version of the exact bug reported live: main turn Stopped
+  # (done) while a Task-tool subagent is still going.
+  run_claude_state working
+  sleep 0.2
+  run_claude_state done
+  run_claude_state agent_start
+  sleep 0.3
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_agent_glyph)1"* ]]
+  [[ "$result" != *"$(tab_pulse_done_glyph)"* ]]
+
+  run_claude_state agent_stop
+  sleep 0.3
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" != *"$(tab_pulse_agent_glyph)"* ]]
 }
 
 @test "a second daemon on the same socket exits immediately instead of running alongside the first" {
@@ -97,7 +132,7 @@ run_claude_state() {
   # cadence is dominated by per-tick option-read overhead (~10-20 tmux
   # subprocess calls, no batching), not the configured interval — so poll
   # rather than pin to one fixed sleep.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     kill -0 "$DAEMON_PID" 2>/dev/null || break
     sleep 0.3
   done

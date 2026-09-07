@@ -9,10 +9,12 @@
 #     -v working_style="$working_style" -v working_frame="$frame" \
 #     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
 #     -v done_glyph="$done_glyph" -v done_style="$done_style" \
+#     -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
 #     -v process_glyph="$process_glyph" -v process_style="$process_style" \
 #     -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
 #     -v claude_version_pattern="$claude_version_pattern" \
-#     -v stale_seconds="$stale_seconds" -v now="$now"
+#     -v stale_seconds="$stale_seconds" -v agents_stale_seconds="$agents_stale_seconds" \
+#     -v now="$now"
 #
 # LC_ALL=C in that invocation is load-bearing, not cosmetic: macOS's stock
 # /usr/bin/awk does locale-aware (collation-based) string comparison under
@@ -25,24 +27,35 @@
 # bytes instead. This file doesn't set LC_ALL itself — the caller must.
 #
 # Input: tab-separated #{window_id} #{pane_id} #{pane_current_command}
-# #{@tab_pulse_state} #{@tab_pulse_ts} #{window_active} #{session_attached},
-# one pane per line (state/ts/window_active/session_attached columns may be
-# entirely absent on lines with only 3 fields).
+# #{@tab_pulse_state} #{@tab_pulse_ts} #{@tab_pulse_agents}
+# #{@tab_pulse_agents_ts}, one pane per line (every column past #3 may be
+# entirely absent on shorter lines).
 #
 # Output, one line per event:
 #   CLEAR\t<pane_id>          pane's stale @tab_pulse_state should be unset
 #                             (crashed/killed Claude — reverted to a shell)
-#   SEEN\t<pane_id>           pane's "done" (finished, unseen) state should
-#                             be downgraded to idle — its window is the one
-#                             an attached client is actually looking at now
 #   WIN\t<window_id>\t<glyph> window's glyph changed since last tick, write it
-#   META\t<0|1>               1 if any window is currently claude-working
+#   META\t<0|1>               1 if any window is currently claude-working OR
+#                             has one or more subagents actively running
 # Also rewrites statefile_new with every window's CURRENT glyph (whether or
 # not it changed), for next tick's change-detection.
 #
 # Priority scale (higher wins when aggregating panes within one window):
 #   5=claude-working 4=claude-attention 3.5=claude-done(unseen) 3=process
 #   2=claude-idle 1=idle
+# "done" persists until the pane's own next real state change (a fresh
+# UserPromptSubmit, or SessionEnd) — NOT cleared just because its window
+# happens to be the one currently selected/attached. An earlier version
+# auto-downgraded it the instant an attached client's active window matched,
+# which meant switching to the very tab you wanted to check made the pause
+# marker disappear before you'd actually had a chance to look at anything.
+#
+# The subagent counter is tracked SEPARATELY, per window (summed across every
+# pane in it) rather than folded into this scale: a subagent can be running
+# regardless of what the main pane's own state says (working, done, even
+# idle), so it isn't "one more rung on the ladder" — it's an independent
+# signal that overrides the glyph choice below (but never attention, which
+# always wins: a genuine pending question outranks background busywork).
 
 BEGIN {
   n = split(shells, sh, " ");  for (i = 1; i <= n; i++) is_shell[sh[i]] = 1
@@ -57,29 +70,25 @@ NF < 3 { next }
 {
   win = $1; paneid = $2; cmd = $3
   state = (NF >= 4 ? $4 : ""); ts = (NF >= 5 ? $5 : "")
-  window_active = (NF >= 6 ? $6 : "0")
-  session_attached = (NF >= 7 ? $7 : "0")
+  agents = (NF >= 6 ? $6 + 0 : 0)
+  agents_ts = (NF >= 7 ? $7 : "")
   if (state != "" && (cmd in is_shell)) {
     print "CLEAR\t" paneid
     state = ""
   }
+  # Self-heal a stuck subagent counter the same way "working" is healed
+  # below: if SubagentStop was ever missed (parent turn interrupted, Claude
+  # killed mid-subagent, ...), nothing else would ever decrement it.
+  if (agents > 0 && agents_stale_seconds > 0 && agents_ts != "" && (now - agents_ts) > agents_stale_seconds) {
+    agents = 0
+  }
+  if (agents > 0) winagents[win] += agents
+
   pr = 1
   if (state != "") {
     if (state == "working")        pr = 5
     else if (state == "attention") pr = 4
-    else if (state == "done") {
-      if (window_active == "1" && (session_attached + 0) > 0) {
-        # Someone is looking at this exact window right now, so it's no
-        # longer "finished, unseen" — persist the transition (rather than
-        # just not showing the glyph THIS tick) so a later, unrelated visit
-        # to this same window doesn't find a stale "done" still sitting
-        # there to react to.
-        print "SEEN\t" paneid
-        pr = 2
-      } else {
-        pr = 3.5
-      }
-    }
+    else if (state == "done")      pr = 3.5
     else pr = 2 # any other/unknown Claude state = claude-idle
     # Self-heal a "working" state that never got a matching Stop — e.g.
     # the user interrupted the turn (Esc/Ctrl-C), which does not fire
@@ -104,11 +113,22 @@ NF < 3 { next }
 END {
   for (w in maxpr) {
     pr = maxpr[w]
-    if (pr == 5)        { glyph = working_style working_frame "#[default]"; any_working = 1 }
-    else if (pr == 4)   glyph = attention_style attention_glyph "#[default]"
-    else if (pr == 3.5) glyph = done_style done_glyph "#[default]"
-    else if (pr == 3)   glyph = process_style process_glyph "#[default]"
-    else                glyph = idle_glyph
+    agents = (w in winagents) ? winagents[w] : 0
+    if (pr == 4) {
+      glyph = attention_style attention_glyph "#[default]"
+    } else if (agents > 0) {
+      glyph = agent_style agent_glyph agents "#[default]"
+      any_working = 1
+    } else if (pr == 5) {
+      glyph = working_style working_frame "#[default]"
+      any_working = 1
+    } else if (pr == 3.5) {
+      glyph = done_style done_glyph "#[default]"
+    } else if (pr == 3) {
+      glyph = process_style process_glyph "#[default]"
+    } else {
+      glyph = idle_glyph
+    }
     if (!(w in prevglyph) || prevglyph[w] != glyph) print "WIN\t" w "\t" glyph
     print w "\t" glyph > statefile_new
   }

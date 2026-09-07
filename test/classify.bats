@@ -30,17 +30,18 @@ run_classify() {
     -v working_style="" -v working_frame="SPIN" \
     -v attention_glyph="ATTN" -v attention_style="" \
     -v done_glyph="DONE" -v done_style="" \
+    -v agent_glyph="AGENTS" -v agent_style="" \
     -v process_glyph="PROC" -v process_style="" \
     -v idle_glyph="IDLE" \
     -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
     -v claude_version_pattern='^[0-9]+(\.[0-9]+){1,3}$' \
-    -v stale_seconds="900" -v now="$NOW" \
+    -v stale_seconds="900" -v agents_stale_seconds="900" -v now="$NOW" \
     "$@" \
     -f "$SCRIPTS_DIR/classify.awk" <"$input"
 }
 
-# row <window> <pane> <cmd> <state> <ts> [window_active] [session_attached]
-# The last two default to empty (treated as "0"/falsy by classify.awk) when
+# row <window> <pane> <cmd> <state> <ts> [agents] [agents_ts]
+# The last two default to empty (treated as 0/falsy by classify.awk) when
 # omitted, so every pre-existing 5-arg call site stays valid unchanged.
 row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"; }
 
@@ -217,7 +218,7 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
 
 @test "a done (finished, unseen) pane shows the done glyph, not idle" {
   input="$(mktemp)"
-  row "@1" "%1" "2.1.263" "done" "$NOW" "0" "0" >"$input"
+  row "@1" "%1" "2.1.263" "done" "$NOW" >"$input"
   run run_classify "$input"
   rm -f "$input"
   [[ "$output" == *$'WIN\t@1\tDONE'* ]]
@@ -226,44 +227,100 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
 @test "done outranks a sibling process pane, but loses to attention and working" {
   input="$(mktemp)"
   {
-    row "@1" "%1" "long-running-build.sh" "" "" "0" "0"
-    row "@1" "%2" "2.1.263" "done" "$NOW" "0" "0"
+    row "@1" "%1" "long-running-build.sh" "" ""
+    row "@1" "%2" "2.1.263" "done" "$NOW"
   } >"$input"
   run run_classify "$input"
   rm -f "$input"
   [[ "$output" == *$'WIN\t@1\tDONE'* ]]
 }
 
-@test "done pane whose window IS the one an attached client is looking at gets SEEN and shows idle" {
+@test "done persists even when its window is the one currently selected/attached" {
+  # Not auto-cleared by visiting the window — see classify.awk's header
+  # comment for why an earlier version's auto-clear-on-select was wrong.
   input="$(mktemp)"
-  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "1" >"$input"
+  row "@1" "%1" "2.1.263" "done" "$NOW" >"$input"
   run run_classify "$input"
   rm -f "$input"
-  [[ "$output" == *$'SEEN\t%1'* ]]
-  [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
-  [[ "$output" != *DONE* ]]
+  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
 }
 
 @test "attention in a sibling pane outranks a done pane in the same window" {
   input="$(mktemp)"
   {
-    row "@1" "%1" "2.1.263" "done" "$NOW" "0" "0"
-    row "@1" "%2" "2.1.263" "attention" "$NOW" "0" "0"
+    row "@1" "%1" "2.1.263" "done" "$NOW"
+    row "@1" "%2" "2.1.263" "attention" "$NOW"
   } >"$input"
   run run_classify "$input"
   rm -f "$input"
   [[ "$output" == *$'WIN\t@1\tATTN'* ]]
 }
 
-@test "done pane in the active window of a session with NO attached client is still done, not SEEN" {
-  # window_active is per-session and persists even with nobody attached —
-  # only session_attached>0 means a real person is actually looking.
+@test "a subagent running overrides an otherwise-done main state" {
+  # Regression test: the exact bug reported live — a session's main turn
+  # already Stopped (done) while a Task-tool subagent it spawned is still
+  # running. The agent count must win, not the stale "done".
   input="$(mktemp)"
-  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "0" >"$input"
+  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "$NOW" >"$input"
   run run_classify "$input"
   rm -f "$input"
-  [[ "$output" != *SEEN* ]]
-  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
+  [[ "$output" == *$'WIN\t@1\tAGENTS1'* ]]
+  [[ "$output" != *DONE* ]]
+}
+
+@test "a subagent running overrides plain idle too" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "idle" "$NOW" "2" "$NOW" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tAGENTS2'* ]]
+}
+
+@test "agent counts from multiple panes in one window are summed" {
+  input="$(mktemp)"
+  {
+    row "@1" "%1" "2.1.263" "idle" "$NOW" "1" "$NOW"
+    row "@1" "%2" "2.1.263" "idle" "$NOW" "2" "$NOW"
+  } >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tAGENTS3'* ]]
+}
+
+@test "attention always wins over a running subagent" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "attention" "$NOW" "1" "$NOW" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tATTN'* ]]
+  [[ "$output" != *AGENTS* ]]
+}
+
+@test "a stale agent count (past the threshold) self-heals to 0" {
+  old_ts=$((NOW - 1000))
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "idle" "$NOW" "1" "$old_ts" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" != *AGENTS* ]]
+  [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
+}
+
+@test "a fresh agent count within the staleness threshold is trusted" {
+  recent_ts=$((NOW - 10))
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "idle" "$NOW" "1" "$recent_ts" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tAGENTS1'* ]]
+}
+
+@test "META reports working when only a subagent count, no main working state, is active" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "idle" "$NOW" "1" "$NOW" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'META\t1'* ]]
 }
 
 @test "the braille spinner alphabet compares correctly under LC_ALL=C (locale-collation regression guard)" {

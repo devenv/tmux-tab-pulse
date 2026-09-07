@@ -23,12 +23,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 state="${1:-}"
 
+# bump_agents <delta>
+# Reads the pane's current subagent counter (default 0 if unset/non-numeric),
+# adds <delta>, clamps at a 0 floor (a stray/duplicate SubagentStop must
+# never drive it negative), and re-stamps the timestamp so the daemon's
+# staleness self-heal (mirrors tab_pulse_working_stale_seconds — a missed
+# SubagentStop, e.g. from an interrupted parent turn, would otherwise leave
+# this stuck above 0 forever) has a fresh clock to measure from.
+bump_agents() {
+  local delta="$1" current
+  current="$(tmux show-option -pqv -t "$TMUX_PANE" @tab_pulse_agents 2>/dev/null)"
+  current=$((current + 0 + delta))
+  [ "$current" -lt 0 ] && current=0
+  tmux set-option -p -t "$TMUX_PANE" @tab_pulse_agents "$current" >/dev/null 2>&1
+  tmux set-option -p -t "$TMUX_PANE" @tab_pulse_agents_ts "$(date +%s)" >/dev/null 2>&1
+}
+
 case "$state" in
   clear|"")
     # SessionEnd, or called with no state: remove the marker entirely so this
-    # pane stops being treated as a Claude pane at all.
+    # pane stops being treated as a Claude pane at all. Subagents can't
+    # legitimately outlive their parent session, so their counter goes too.
     tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_state >/dev/null 2>&1
     tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_ts >/dev/null 2>&1
+    tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_agents >/dev/null 2>&1
+    tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_agents_ts >/dev/null 2>&1
+    ;;
+  agent_start)
+    # Deliberately does NOT touch @tab_pulse_state — a subagent starting
+    # doesn't change what the MAIN turn is doing; classify.awk factors the
+    # agent counter in as its own, separate signal.
+    bump_agents 1
+    ;;
+  agent_stop)
+    bump_agents -1
     ;;
   *)
     tmux set-option -p -t "$TMUX_PANE" @tab_pulse_state "$state" >/dev/null 2>&1

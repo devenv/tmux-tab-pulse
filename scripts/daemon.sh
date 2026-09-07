@@ -112,7 +112,7 @@ frame_index=0
 : >"$STATEFILE" # start with no prior state — first tick just writes everything
 
 while true; do
-  if ! panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}\t#{window_active}\t#{session_attached}' 2>/dev/null)"; then
+  if ! panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}\t#{@tab_pulse_agents}\t#{@tab_pulse_agents_ts}' 2>/dev/null)"; then
     # tmux server is gone (or unreachable) — nothing left to serve.
     break
   fi
@@ -129,11 +129,14 @@ while true; do
   attention_style="$(tab_pulse_attention_style)"
   done_glyph="$(tab_pulse_done_glyph)"
   done_style="$(tab_pulse_done_style)"
+  agent_glyph="$(tab_pulse_agent_glyph)"
+  agent_style="$(tab_pulse_agent_style)"
   process_glyph="$(tab_pulse_process_glyph)"
   process_style="$(tab_pulse_process_style)"
   idle_glyph="$(tab_pulse_idle_glyph)"
   claude_version_pattern="$(tab_pulse_claude_version_pattern)"
   stale_seconds="$(tab_pulse_working_stale_seconds)"
+  agents_stale_seconds="$(tab_pulse_agents_stale_seconds)"
   now="$(date +%s)"
 
   # One awk pass does everything: classify each pane, aggregate per window_id
@@ -146,10 +149,7 @@ while true; do
   # plain shell — meaning Claude exited without ever firing SessionEnd (e.g.
   # killed, Ctrl-C'd) and left a stale state behind. Those get their pane
   # option unset below so they stop being treated as a Claude pane, and
-  # count as idle/process for this tick. Also flags "SEEN" panes: a "done"
-  # (finished, unseen) pane whose window an attached client is actually
-  # looking at right now — downgraded to plain claude-idle below so a later,
-  # unrelated visit doesn't find a stale "done" still there to react to.
+  # count as idle/process for this tick.
   #
   # Logic lives in classify.awk (see that file for why LC_ALL=C below is
   # load-bearing, not cosmetic) so it can be unit-tested directly — see
@@ -159,10 +159,12 @@ while true; do
     -v working_style="$working_style" -v working_frame="${FRAMES[$frame_index]}" \
     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
     -v done_glyph="$done_glyph" -v done_style="$done_style" \
+    -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
     -v process_glyph="$process_glyph" -v process_style="$process_style" \
     -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
     -v claude_version_pattern="$claude_version_pattern" \
-    -v stale_seconds="$stale_seconds" -v now="$now" \
+    -v stale_seconds="$stale_seconds" -v agents_stale_seconds="$agents_stale_seconds" \
+    -v now="$now" \
     -f "$SCRIPT_DIR/classify.awk"
   )"
 
@@ -172,9 +174,6 @@ while true; do
     case "$kind" in
     CLEAR)
       tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1
-      ;;
-    SEEN)
-      tmux set-option -p -t "$a" @tab_pulse_state idle >/dev/null 2>&1
       ;;
     WIN)
       tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1

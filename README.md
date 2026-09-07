@@ -9,7 +9,8 @@ anything happening here?*
 myrepo         idle — nothing going on
 myrepo ⠹       Claude Code is working (animated spinner)
 myrepo ⚠       Claude Code needs you — a permission prompt or a question (red, alarming)
-myrepo ⏸       Claude Code just finished and you haven't looked at this tab since
+myrepo ⏸       Claude Code just finished and you haven't started a new turn there since
+myrepo ⚙2      2 Task-tool subagents are actively running in this window
 myrepo ●       a plain process is running (script, dev server, …) — light yellow
 ```
 
@@ -39,12 +40,22 @@ another pane, Claude's status wins.
   frame for up to `@tab-pulse-idle-interval`.
 - **A finished turn isn't the same as one you've actually looked at**: `Stop`
   maps to `done`, not straight to plain `idle` — a distinct glyph (⏸ by
-  default) for "Claude finished, you haven't seen it yet", so a completed
-  unattended agent loop doesn't look identical to a tab that's been sitting
-  untouched for an hour. It downgrades itself to plain claude-idle the moment
-  an attached client actually looks at that exact window (tmux's
-  `window_active` + `session_attached`) — no separate "mark as read" action
-  needed, and no risk of it flickering back once you've moved on.
+  default) for "Claude finished", so a completed unattended agent loop
+  doesn't look identical to a tab that's been sitting untouched for an hour.
+  It persists until that pane's own next real state change — a fresh
+  `UserPromptSubmit` (a new turn) or `SessionEnd` — NOT just by switching to
+  or selecting that window. An earlier version auto-cleared it the instant
+  an attached client's active window matched, which meant switching to the
+  very tab you wanted to check made the marker disappear before you'd had a
+  chance to look at anything.
+- **Subagents get their own signal, independent of the main state**:
+  `SubagentStart`/`SubagentStop` maintain a live count of Task-tool
+  subagents running in a pane. A window with one or more active subagents
+  shows a count (`⚙2` by default) instead of `done`/idle/process — even if
+  the MAIN turn already Stopped, since background agent work is real,
+  ongoing activity the main state alone can't see. Never overrides
+  `attention`: a genuine pending question always wins over background
+  busywork.
 - **Red means a genuine ask, not just "a turn ended"**: only
   `Notification`'s `permission_prompt`/`agent_needs_input` matchers — which
   specifically mean Claude is blocked waiting on you for something — turn the
@@ -134,8 +145,11 @@ busy-loop the daemon).
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
 | `@tab-pulse-attention-glyph` | `⚠` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
-| `@tab-pulse-done-glyph` | `⏸` | Glyph shown when Claude finished a turn (`Stop`) and this window hasn't been visited since. |
+| `@tab-pulse-done-glyph` | `⏸` | Glyph shown when Claude finished a turn (`Stop`), until the pane's next real state change. |
 | `@tab-pulse-done-style` | `#[fg=colour81]` | Style for the done glyph. |
+| `@tab-pulse-agent-glyph` | `⚙` | Glyph prefix shown when one or more Task-tool subagents are running in the window, followed by the live count (e.g. `⚙2`). |
+| `@tab-pulse-agent-style` | `#[fg=colour213]` | Style for the agent-count glyph. |
+| `@tab-pulse-agents-stale-seconds` | same as `@tab-pulse-working-stale-seconds` | Seconds a nonzero subagent count may sit with no fresh `SubagentStart`/`SubagentStop` before it's reset to 0 — self-heals a missed `SubagentStop` (e.g. the parent turn was interrupted). |
 | `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (distinct shape from attention's `⚠`). |
 | `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
 | `@tab-pulse-idle-glyph` | ` ` (space) | What renders in the reserved cell when idle. |
@@ -162,6 +176,10 @@ process in another pane — so a dev server in a split still surfaces instead
 of being masked by a quiet Claude prompt. A finished-but-unseen pane still
 outranks a plain process, since "Claude wants your attention (eventually)"
 matters more than "a script is running".
+
+Running subagents are tracked separately from this ladder entirely (summed
+across every pane in the window) and override the glyph choice above — except
+`attention`, which always wins regardless of subagent activity.
 
 ## Known limitations
 

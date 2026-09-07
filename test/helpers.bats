@@ -93,10 +93,6 @@ teardown() {
 }
 
 @test "tab_pulse_publish_window: a done (finished, unseen) pane writes the done glyph" {
-  # This harness's test sessions are always created detached (-d) and never
-  # attached to a real client, so session_attached is genuinely 0 here — the
-  # done state has nothing to be "seen" by, exactly like a Claude pane
-  # finishing while nobody's looking at that window.
   tab_pulse_tmux send-keys -t "$TEST_PANE" 'exec sleep 300' Enter
   sleep 0.3
   tab_pulse_tmux set-option -p -t "$TEST_PANE" @tab_pulse_state done

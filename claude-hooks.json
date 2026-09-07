@@ -41,6 +41,20 @@
           { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["clear"] }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["agent_start"] }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["agent_stop"] }
+        ]
+      }
     ]
   }
 }
