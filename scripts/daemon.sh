@@ -112,7 +112,7 @@ frame_index=0
 : >"$STATEFILE" # start with no prior state — first tick just writes everything
 
 while true; do
-  panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}' 2>/dev/null)"
+  panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}' 2>/dev/null)"
   if [ $? -ne 0 ]; then
     # tmux server is gone (or unreachable) — nothing left to serve.
     break
@@ -131,6 +131,9 @@ while true; do
   process_glyph="$(tab_pulse_process_glyph)"
   process_style="$(tab_pulse_process_style)"
   idle_glyph="$(tab_pulse_idle_glyph)"
+  claude_version_pattern="$(tab_pulse_claude_version_pattern)"
+  stale_seconds="$(tab_pulse_working_stale_seconds)"
+  now="$(date +%s)"
 
   # One awk pass does everything: classify each pane, aggregate per window_id
   # -> max-priority pane (higher wins — 5=claude-working, 4=claude-attention,
@@ -156,7 +159,9 @@ while true; do
     -v working_style="$working_style" -v working_frame="${FRAMES[$frame_index]}" \
     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
     -v process_glyph="$process_glyph" -v process_style="$process_style" \
-    -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" '
+    -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
+    -v claude_version_pattern="$claude_version_pattern" \
+    -v stale_seconds="$stale_seconds" -v now="$now" '
     BEGIN {
       n = split(shells, sh, " ");  for (i = 1; i <= n; i++) is_shell[sh[i]] = 1
       m = split(ignores, ig, " "); for (i = 1; i <= m; i++) is_ignore[ig[i]] = 1
@@ -168,7 +173,8 @@ while true; do
     }
     NF < 3 { next }
     {
-      win = $1; paneid = $2; cmd = $3; state = (NF >= 4 ? $4 : "")
+      win = $1; paneid = $2; cmd = $3
+      state = (NF >= 4 ? $4 : ""); ts = (NF >= 5 ? $5 : "")
       if (state != "" && (cmd in is_shell)) {
         print "CLEAR\t" paneid
         state = ""
@@ -178,6 +184,21 @@ while true; do
         if (state == "working")        pr = 5
         else if (state == "attention") pr = 4
         else                           pr = 2   # any other/unknown Claude state = claude-idle
+        # Self-heal a "working" state that never got a matching Stop — e.g.
+        # the user interrupted the turn (Esc/Ctrl-C), which does not fire
+        # Stop, so nothing else would ever clear it. Only "working" is
+        # subject to this: "attention" can legitimately sit for a long time
+        # waiting on a real answer from the user and must not be auto-cleared.
+        if (pr == 5 && stale_seconds > 0 && ts != "" && (now - ts) > stale_seconds) {
+          pr = 2
+        }
+      } else if (cmd ~ claude_version_pattern) {
+        # Claude Code reports its own version string as pane_current_command
+        # (not "claude"), so a pane with no hook-pushed state yet (predates
+        # the hooks being installed, or predates its first SessionStart/
+        # UserPromptSubmit since) would otherwise be indistinguishable from
+        # an arbitrary background process and get the generic process marker.
+        pr = 2
       } else if (detect == "on" && !(cmd in is_shell) && !(cmd in is_ignore)) {
         pr = 3
       }

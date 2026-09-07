@@ -35,6 +35,27 @@ tab_pulse_idle_interval_seconds() {
   LC_ALL=C awk -v ms="$ms" 'BEGIN { ms = ms + 0; if (ms < 50) ms = 50; printf "%.3f", ms / 1000 }'
 }
 
+# Seconds a pane may sit in the "working" state with no fresh push before the
+# daemon stops trusting it and treats it as claude-idle instead. Claude Code's
+# Stop hook does not fire when a turn ends via user interrupt (Esc/Ctrl-C) —
+# https://code.claude.com/docs/en/hooks — so a pane left mid-turn that way
+# would otherwise show the working spinner forever, since nothing but another
+# UserPromptSubmit or SessionEnd would ever clear it. 0 disables the check.
+tab_pulse_working_stale_seconds() {
+  tmux_get '@tab-pulse-working-stale-seconds' '900'
+}
+
+# ERE Claude Code's own pane_current_command matches when hook state hasn't
+# been pushed yet: tmux reports Claude Code's version string (e.g. 2.1.214)
+# as the foreground command, not "claude" (see README) — so a pane running
+# Claude Code that predates the hooks being installed, or predates its first
+# SessionStart/UserPromptSubmit since, would otherwise be indistinguishable
+# from an arbitrary background process and get the generic process marker
+# instead of anything Claude-specific.
+tab_pulse_claude_version_pattern() {
+  tmux_get '@tab-pulse-claude-version-pattern' '^[0-9]+(\.[0-9]+){1,3}$'
+}
+
 # Spinner frames, SPACE-SEPARATED (not one contiguous string) so the daemon
 # can split them with plain word-splitting regardless of multibyte
 # width/locale support in whatever /bin/bash the user has (notably macOS's
@@ -145,10 +166,14 @@ tab_pulse_priority_for_process() {
 # the daemon's server-wide sweep.
 tab_pulse_window_priority() {
   local win="$1" best=1 cmd state pr
+  local version_pattern
+  version_pattern="$(tab_pulse_claude_version_pattern)"
   while IFS=$'\t' read -r cmd state; do
     [ -n "$cmd" ] || continue
     if [ -n "$state" ]; then
       pr="$(tab_pulse_priority_for_claude_state "$state")"
+    elif printf '%s' "$cmd" | grep -Eq "$version_pattern"; then
+      pr=2 # looks like Claude Code's own version-as-command-name; see helper doc
     else
       pr="$(tab_pulse_priority_for_process "$cmd")"
     fi

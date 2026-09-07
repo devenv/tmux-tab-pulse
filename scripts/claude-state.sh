@@ -28,9 +28,15 @@ case "$state" in
     # SessionEnd, or called with no state: remove the marker entirely so this
     # pane stops being treated as a Claude pane at all.
     tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_state >/dev/null 2>&1
+    tmux set-option -pu -t "$TMUX_PANE" @tab_pulse_ts >/dev/null 2>&1
     ;;
   *)
     tmux set-option -p -t "$TMUX_PANE" @tab_pulse_state "$state" >/dev/null 2>&1
+    # Timestamp lets the daemon self-heal a "working" state that never gets
+    # a matching Stop — e.g. the user interrupted the turn (Esc/Ctrl-C),
+    # which Claude Code's docs say does NOT fire Stop — instead of showing
+    # the working spinner forever. See tab_pulse_working_stale_seconds.
+    tmux set-option -p -t "$TMUX_PANE" @tab_pulse_ts "$(date +%s)" >/dev/null 2>&1
     ;;
 esac
 
