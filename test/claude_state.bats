@@ -44,6 +44,15 @@ run_claude_state() {
   [[ "$result" == *"$(tab_pulse_attention_glyph)"* ]]
 }
 
+@test "pushing 'done' (Stop) immediately publishes the done glyph, since nobody's attached to see it" {
+  # This harness's sessions are always created detached and never attached
+  # to a real client — session_attached is genuinely 0, exactly like Claude
+  # finishing a turn while nobody is looking at that window.
+  run run_claude_state done
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+}
+
 @test "pushing 'clear' (SessionEnd) removes both the state and timestamp" {
   run_claude_state working
   run run_claude_state clear

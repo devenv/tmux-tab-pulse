@@ -17,7 +17,7 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["idle"] }
+          { "type": "command", "command": "__CLAUDE_STATE_SCRIPT__", "args": ["done"] }
         ]
       }
     ],

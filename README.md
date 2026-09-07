@@ -6,9 +6,10 @@ It answers one question at a glance, per tab, without switching into it: *is
 anything happening here?*
 
 ```
-myrepo         idle — nothing going on (also: Claude just finished, nothing pending)
+myrepo         idle — nothing going on
 myrepo ⠹       Claude Code is working (animated spinner)
 myrepo ⚠       Claude Code needs you — a permission prompt or a question (red, alarming)
+myrepo ⏸       Claude Code just finished and you haven't looked at this tab since
 myrepo ●       a plain process is running (script, dev server, …) — light yellow
 ```
 
@@ -26,8 +27,8 @@ another pane, Claude's status wins.
   (`@tab_pulse`). `window-status-format` just reads that option — no
   per-window subprocess, no shelling out from the status line itself.
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks) push state
-  ("working" / "attention" / "idle") onto whichever pane Claude is running
-  in, via `$TMUX_PANE`. This is optional — the plugin works for plain
+  ("working" / "attention" / "done" / "idle") onto whichever pane Claude is
+  running in, via `$TMUX_PANE`. This is optional — the plugin works for plain
   processes with zero Claude Code integration. The hook script also pushes an
   immediate update itself the moment a hook fires — showing the correct glyph
   right away — and wakes the daemon (a `SIGUSR1` to its own pid, found via
@@ -36,12 +37,18 @@ another pane, Claude's status wins.
   to be in. Without this, a turn could start and finish before the daemon's
   own poll ever noticed it, or the spinner could sit frozen on its first
   frame for up to `@tab-pulse-idle-interval`.
-- **Red means a genuine ask, not just "a turn ended"**: `Stop` (Claude
-  finishing a response) maps to `idle`, not `attention` — a turn that just
-  completes with nothing further needed goes blank, not red. Only
+- **A finished turn isn't the same as one you've actually looked at**: `Stop`
+  maps to `done`, not straight to plain `idle` — a distinct glyph (⏸ by
+  default) for "Claude finished, you haven't seen it yet", so a completed
+  unattended agent loop doesn't look identical to a tab that's been sitting
+  untouched for an hour. It downgrades itself to plain claude-idle the moment
+  an attached client actually looks at that exact window (tmux's
+  `window_active` + `session_attached`) — no separate "mark as read" action
+  needed, and no risk of it flickering back once you've moved on.
+- **Red means a genuine ask, not just "a turn ended"**: only
   `Notification`'s `permission_prompt`/`agent_needs_input` matchers — which
   specifically mean Claude is blocked waiting on you for something — turn the
-  marker red. (An earlier version also mapped `Stop` straight to `attention`,
+  marker red. (An earlier version mapped `Stop` straight to `attention`,
   so any pane you hadn't glanced at since its last turn stayed alarmingly red
   indefinitely, regardless of whether anything was actually pending. A later
   version added `idle_prompt` to the same list, which turned out to be just
@@ -127,10 +134,14 @@ busy-loop the daemon).
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
 | `@tab-pulse-attention-glyph` | `⚠` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
+| `@tab-pulse-done-glyph` | `⏸` | Glyph shown when Claude finished a turn (`Stop`) and this window hasn't been visited since. |
+| `@tab-pulse-done-style` | `#[fg=colour81]` | Style for the done glyph. |
 | `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (distinct shape from attention's `⚠`). |
 | `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
 | `@tab-pulse-idle-glyph` | ` ` (space) | What renders in the reserved cell when idle. |
 | `@tab-pulse-process-detection` | `on` | Set to `off` to disable the plain-process marker entirely (Claude-only mode). |
+| `@tab-pulse-working-stale-seconds` | `900` | Seconds a pane may sit in `working` with no fresh push before it's treated as claude-idle instead — self-heals a turn interrupted (Esc/Ctrl-C) before Claude's `Stop` hook could fire, since that hook doesn't run on a user interrupt. `0` disables the check. Never applies to `attention`, which can legitimately wait a long time. |
+| `@tab-pulse-claude-version-pattern` | `^[0-9]+(\.[0-9]+){1,3}$` | ERE matching Claude Code's own `pane_current_command` shape (tmux reports its version string, e.g. `2.1.263`, not `claude`) — lets a pane with no hook-pushed state yet (predates the hooks being installed) still classify as claude-idle instead of the generic process marker. |
 | `@tab-pulse-ignore-commands` | `nvim vim vi less more man htop btop top fzf tig lazygit bat delta` | Space-separated `pane_current_command` values that should *not* count as "a process running" (interactive TUIs). |
 | `@tab-pulse-shells` | `zsh bash sh fish -zsh -bash -sh -fish` | Space-separated commands treated as "just a shell prompt", i.e. never a process. |
 | `@tab-pulse-name-format` *(load-time only)* | `#I:#W` | The window-name portion tmux-tab-pulse builds its format string around. |
@@ -142,13 +153,15 @@ Each pane in a window is classified, and the window shows the
 highest-priority pane's status:
 
 ```
-claude-working > claude-attention > process > claude-idle > idle
+claude-working > claude-attention > claude-done(unseen) > process > claude-idle > idle
 ```
 
 A working or awaiting-you Claude pane always wins over a sibling process pane.
 A Claude pane that's merely idle, though, yields to a genuinely running
 process in another pane — so a dev server in a split still surfaces instead
-of being masked by a quiet Claude prompt.
+of being masked by a quiet Claude prompt. A finished-but-unseen pane still
+outranks a plain process, since "Claude wants your attention (eventually)"
+matters more than "a script is running".
 
 ## Known limitations
 

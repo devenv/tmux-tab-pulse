@@ -7,6 +7,7 @@
 # copy's location, not this repo.
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd -P)"
 INSTALLER="$REPO_ROOT/scripts/install-claude-hooks.sh"
+STATE_SCRIPT="$REPO_ROOT/scripts/claude-state.sh"
 EVENTS="SessionStart UserPromptSubmit Stop Notification SessionEnd"
 
 setup() {
@@ -93,4 +94,21 @@ teardown() {
   # The events that were NEVER removed must be untouched, not reported as
   # newly installed a second time.
   [[ "$output" != *"Stop, SessionStart"* ]]
+}
+
+@test "a stale arg value from an older template version gets replaced, not left alongside the new one" {
+  # Regression test: an earlier version of this plugin pushed "idle" on
+  # Stop; this one pushes "done". A command-only presence check would call
+  # Stop "already installed" forever and never pick up the new arg — seed
+  # exactly that stale shape and confirm a re-run corrects it in place.
+  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s","args":["idle"]}]}]}}\n' \
+    "$STATE_SCRIPT" >"$CLAUDE_SETTINGS_PATH"
+
+  run bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Stop"* ]]
+  [ "$(jq '[.hooks.Stop[].hooks[] | select(.command == $script)] | length' \
+    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" -eq 1 ]
+  [ "$(jq -r '.hooks.Stop[].hooks[] | select(.command == $script) | .args[0]' \
+    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" = "done" ]
 }

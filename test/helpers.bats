@@ -92,6 +92,21 @@ teardown() {
   [[ "$result" == *"$(tab_pulse_attention_glyph)"* ]]
 }
 
+@test "tab_pulse_publish_window: a done (finished, unseen) pane writes the done glyph" {
+  # This harness's test sessions are always created detached (-d) and never
+  # attached to a real client, so session_attached is genuinely 0 here — the
+  # done state has nothing to be "seen" by, exactly like a Claude pane
+  # finishing while nobody's looking at that window.
+  tab_pulse_tmux send-keys -t "$TEST_PANE" 'exec sleep 300' Enter
+  sleep 0.3
+  tab_pulse_tmux set-option -p -t "$TEST_PANE" @tab_pulse_state done
+  tab_pulse_publish_window "$TEST_WINDOW"
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+  # And the state itself must still say "done" — not seen, not cleared.
+  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_state)" = "done" ]
+}
+
 @test "tab_pulse_publish_window: a working Claude pane wins over a sibling process pane" {
   tab_pulse_tmux split-window -t test
   panes=($(tab_pulse_tmux list-panes -t test -F '#{pane_id}'))

@@ -29,6 +29,7 @@ run_classify() {
     -v detect="on" \
     -v working_style="" -v working_frame="SPIN" \
     -v attention_glyph="ATTN" -v attention_style="" \
+    -v done_glyph="DONE" -v done_style="" \
     -v process_glyph="PROC" -v process_style="" \
     -v idle_glyph="IDLE" \
     -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
@@ -38,7 +39,10 @@ run_classify() {
     -f "$SCRIPTS_DIR/classify.awk" <"$input"
 }
 
-row() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; }
+# row <window> <pane> <cmd> <state> <ts> [window_active] [session_attached]
+# The last two default to empty (treated as "0"/falsy by classify.awk) when
+# omitted, so every pre-existing 5-arg call site stays valid unchanged.
+row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"; }
 
 @test "fresh working pane: window glyph is the spinner frame" {
   input="$(mktemp)"
@@ -209,6 +213,57 @@ row() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; }
   run run_classify "$input2"
   rm -f "$input1" "$input2"
   [[ "$output" == *$'WIN\t@1\tATTN'* ]]
+}
+
+@test "a done (finished, unseen) pane shows the done glyph, not idle" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "done" "$NOW" "0" "0" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
+}
+
+@test "done outranks a sibling process pane, but loses to attention and working" {
+  input="$(mktemp)"
+  {
+    row "@1" "%1" "long-running-build.sh" "" "" "0" "0"
+    row "@1" "%2" "2.1.263" "done" "$NOW" "0" "0"
+  } >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
+}
+
+@test "done pane whose window IS the one an attached client is looking at gets SEEN and shows idle" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "1" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'SEEN\t%1'* ]]
+  [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
+  [[ "$output" != *DONE* ]]
+}
+
+@test "attention in a sibling pane outranks a done pane in the same window" {
+  input="$(mktemp)"
+  {
+    row "@1" "%1" "2.1.263" "done" "$NOW" "0" "0"
+    row "@1" "%2" "2.1.263" "attention" "$NOW" "0" "0"
+  } >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tATTN'* ]]
+}
+
+@test "done pane in the active window of a session with NO attached client is still done, not SEEN" {
+  # window_active is per-session and persists even with nobody attached —
+  # only session_attached>0 means a real person is actually looking.
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "0" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" != *SEEN* ]]
+  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
 }
 
 @test "the braille spinner alphabet compares correctly under LC_ALL=C (locale-collation regression guard)" {

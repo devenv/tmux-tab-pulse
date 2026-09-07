@@ -71,6 +71,21 @@ run_claude_state() {
   [[ "$result" != *"$(tab_pulse_spinner_frames | cut -d' ' -f1)"* ]]
 }
 
+@test "the daemon shows done (finished, unseen) after Stop, and keeps it — nobody's attached to see it" {
+  run_claude_state working
+  sleep 0.2
+  run_claude_state done
+  sleep 0.3
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+  # It must persist across the daemon's own later ticks too, not just the
+  # instant of claude-state.sh's own push — this test's tmux session is
+  # never attached, so nothing should ever downgrade it on its own.
+  sleep 0.5
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+}
+
 @test "a second daemon on the same socket exits immediately instead of running alongside the first" {
   run timeout 2 bash "$SCRIPTS_DIR/daemon.sh"
   [ "$status" -eq 0 ]

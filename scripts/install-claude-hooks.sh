@@ -53,13 +53,16 @@ jq --arg script "$STATE_SCRIPT" '
   walk(if type == "string" then gsub("__CLAUDE_STATE_SCRIPT__"; $script) else . end)
 ' "$TEMPLATE" >"$RENDERED"
 
-# Which of our events are missing from the current settings file? An event
-# only counts as "present" if some existing hook entry under that exact key
-# already points at our own script — not merely if the script path appears
-# anywhere in the file (the old check used a whole-file grep, which could
-# both false-positive on an unrelated mention of the path and false-negative
-# detect partial removal, e.g. if just UserPromptSubmit+Stop were deleted by
-# hand it still said "already installed").
+# Which of our events need (re-)installing? Not just "missing" — an event
+# also needs updating if OUR OWN entries under it don't match the current
+# template anymore (e.g. Stop's arg changing from "idle" to "done" between
+# versions of this plugin). Comparing whole hook-block equality, not just
+# "does our command appear at all", is what catches that: a stale arg value
+# would otherwise pass a command-only check forever and never update on
+# reinstall. Not merely "does the script path appear anywhere in the file"
+# either — that check could both false-positive on an unrelated mention of
+# the path and false-negative on partial removal (e.g. hand-deleting just
+# UserPromptSubmit+Stop still said "already installed").
 MISSING_JSON="$(jq -n \
   --slurpfile settings "$SETTINGS" \
   --slurpfile new "$RENDERED" \
@@ -67,7 +70,8 @@ MISSING_JSON="$(jq -n \
     ($settings[0].hooks // {}) as $orig
     | ($new[0].hooks) as $newhooks
     | [ $newhooks | keys[] as $e
-        | select((($orig[$e] // []) | any(.hooks[]?.command == $script)) | not)
+        | (($orig[$e] // []) | map(select(.hooks[]?.command == $script))) as $ours
+        | select($ours != $newhooks[$e])
         | $e
       ]
 ')"
@@ -81,16 +85,22 @@ BACKUP="$SETTINGS.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pretpm)"
 cp "$SETTINGS" "$BACKUP"
 echo "backed up existing settings to $BACKUP"
 
-# Append our entries only for the missing events (leaving any event that
-# already has our hook untouched, so this never creates duplicates), on top
-# of whatever hooks already exist for that event from other sources.
+# For each event needing (re-)installing: drop OUR OWN existing entries
+# (identified by command, regardless of their args — so a stale "idle" gets
+# removed, not left alongside the new "done") and append the current
+# template, on top of whatever hooks already exist there from OTHER tools
+# (untouched either way, since the filter only matches our own command).
 jq \
   --slurpfile new "$RENDERED" \
-  --argjson missing "$MISSING_JSON" '
+  --argjson missing "$MISSING_JSON" \
+  --arg script "$STATE_SCRIPT" '
     (.hooks // {}) as $orig
     | .hooks = (
         reduce ($missing[]) as $event ($orig;
-          .[$event] = (($orig[$event] // []) + $new[0].hooks[$event])
+          .[$event] = (
+            (($orig[$event] // []) | map(select(.hooks[]?.command != $script)))
+            + $new[0].hooks[$event]
+          )
         )
       )
 ' "$SETTINGS" >"$TMP_OUT"
@@ -101,5 +111,5 @@ jq \
 # read-only settings file).
 cat "$TMP_OUT" >"$SETTINGS"
 
-echo "installed tmux-tab-pulse hooks into $SETTINGS"
-echo "events newly registered: $(printf '%s' "$MISSING_JSON" | jq -r 'join(", ")')"
+echo "installed/updated tmux-tab-pulse hooks in $SETTINGS"
+echo "events (re-)installed: $(printf '%s' "$MISSING_JSON" | jq -r 'join(", ")')"

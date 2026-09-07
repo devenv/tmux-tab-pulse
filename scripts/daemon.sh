@@ -112,7 +112,7 @@ frame_index=0
 : >"$STATEFILE" # start with no prior state — first tick just writes everything
 
 while true; do
-  if ! panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}' 2>/dev/null)"; then
+  if ! panes="$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}\t#{window_active}\t#{session_attached}' 2>/dev/null)"; then
     # tmux server is gone (or unreachable) — nothing left to serve.
     break
   fi
@@ -127,6 +127,8 @@ while true; do
   working_style="$(tab_pulse_working_style)"
   attention_glyph="$(tab_pulse_attention_glyph)"
   attention_style="$(tab_pulse_attention_style)"
+  done_glyph="$(tab_pulse_done_glyph)"
+  done_style="$(tab_pulse_done_style)"
   process_glyph="$(tab_pulse_process_glyph)"
   process_style="$(tab_pulse_process_style)"
   idle_glyph="$(tab_pulse_idle_glyph)"
@@ -136,14 +138,18 @@ while true; do
 
   # One awk pass does everything: classify each pane, aggregate per window_id
   # -> max-priority pane (higher wins — 5=claude-working, 4=claude-attention,
-  # 3=process, 2=claude-idle, 1=idle), build that window's fully-styled
-  # glyph, and compare it against the previous tick's snapshot (loaded from
-  # STATEFILE) to decide whether it actually needs writing this time. Also
-  # flags "CLEAR" panes: ones that still carry a Claude @tab_pulse_state but
-  # whose foreground command has reverted to a plain shell — meaning Claude
-  # exited without ever firing SessionEnd (e.g. killed, Ctrl-C'd) and left a
-  # stale state behind. Those get their pane option unset below so they stop
-  # being treated as a Claude pane, and count as idle/process for this tick.
+  # 3.5=claude-done(unseen), 3=process, 2=claude-idle, 1=idle), build that
+  # window's fully-styled glyph, and compare it against the previous tick's
+  # snapshot (loaded from STATEFILE) to decide whether it actually needs
+  # writing this time. Also flags "CLEAR" panes: ones that still carry a
+  # Claude @tab_pulse_state but whose foreground command has reverted to a
+  # plain shell — meaning Claude exited without ever firing SessionEnd (e.g.
+  # killed, Ctrl-C'd) and left a stale state behind. Those get their pane
+  # option unset below so they stop being treated as a Claude pane, and
+  # count as idle/process for this tick. Also flags "SEEN" panes: a "done"
+  # (finished, unseen) pane whose window an attached client is actually
+  # looking at right now — downgraded to plain claude-idle below so a later,
+  # unrelated visit doesn't find a stale "done" still there to react to.
   #
   # Logic lives in classify.awk (see that file for why LC_ALL=C below is
   # load-bearing, not cosmetic) so it can be unit-tested directly — see
@@ -152,6 +158,7 @@ while true; do
     -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
     -v working_style="$working_style" -v working_frame="${FRAMES[$frame_index]}" \
     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
+    -v done_glyph="$done_glyph" -v done_style="$done_style" \
     -v process_glyph="$process_glyph" -v process_style="$process_style" \
     -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
     -v claude_version_pattern="$claude_version_pattern" \
@@ -165,6 +172,9 @@ while true; do
     case "$kind" in
     CLEAR)
       tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1
+      ;;
+    SEEN)
+      tmux set-option -p -t "$a" @tab_pulse_state idle >/dev/null 2>&1
       ;;
     WIN)
       tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1

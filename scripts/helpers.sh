@@ -82,6 +82,20 @@ tab_pulse_attention_style() {
   tmux_get '@tab-pulse-attention-style' '#[fg=red,bold]'
 }
 
+# Shown for a window whose Claude turn just finished (Stop fired) but that
+# hasn't been visited since — distinct from a plain idle pane so a finished
+# turn doesn't look identical to one that's been sitting untouched for an
+# hour. Cleared automatically (downgraded to plain claude-idle) the moment
+# an attached client actually looks at that window — see classify.awk's SEEN
+# event.
+tab_pulse_done_glyph() {
+  tmux_get '@tab-pulse-done-glyph' '⏸'
+}
+
+tab_pulse_done_style() {
+  tmux_get '@tab-pulse-done-style' '#[fg=colour81]'
+}
+
 tab_pulse_process_glyph() {
   tmux_get '@tab-pulse-process-glyph' '●'
 }
@@ -159,11 +173,12 @@ tab_pulse_publish_window() {
   frame="${frames[0]:-*}"
 
   local aggregated kind a b
-  aggregated="$(tmux list-panes -t "$win" -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}' 2>/dev/null \
+  aggregated="$(tmux list-panes -t "$win" -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}\t#{window_active}\t#{session_attached}' 2>/dev/null \
     | LC_ALL=C awk -F $'\t' \
       -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
       -v working_style="$(tab_pulse_working_style)" -v working_frame="$frame" \
       -v attention_glyph="$(tab_pulse_attention_glyph)" -v attention_style="$(tab_pulse_attention_style)" \
+      -v done_glyph="$(tab_pulse_done_glyph)" -v done_style="$(tab_pulse_done_style)" \
       -v process_glyph="$(tab_pulse_process_glyph)" -v process_style="$(tab_pulse_process_style)" \
       -v idle_glyph="$(tab_pulse_idle_glyph)" -v statefile="/dev/null" -v statefile_new="/dev/null" \
       -v claude_version_pattern="$(tab_pulse_claude_version_pattern)" \
@@ -173,6 +188,7 @@ tab_pulse_publish_window() {
   while IFS=$'\t' read -r kind a b; do
     case "$kind" in
     CLEAR) tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1 ;;
+    SEEN) tmux set-option -p -t "$a" @tab_pulse_state idle >/dev/null 2>&1 ;;
     WIN) tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1 ;;
     esac
   done <<<"$aggregated"
