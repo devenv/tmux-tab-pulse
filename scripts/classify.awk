@@ -27,14 +27,25 @@
 # first frame for the entire turn. Forcing the C locale makes awk compare raw
 # bytes instead. This file doesn't set LC_ALL itself — the caller must.
 #
+# claude_version_pattern's caller must DOUBLE its backslashes (e.g.
+# '^[0-9]+(\\.[0-9]+){1,3}$', not '\.') — `awk -v` does its own escape-sequence
+# processing on the assigned string before the regex engine ever sees it, so
+# a single-escaped `\.` arrives as a bare `.` (a wildcard, matching ANY
+# character) and silently over-matches. Verified: the single-escaped form
+# let "2x1x263" match. helpers.sh's default already double-escapes.
+#
 # Input: tab-separated #{window_id} #{pane_id} #{pane_current_command}
 # #{@tab_pulse_state} #{@tab_pulse_ts} #{@tab_pulse_agents}
 # #{@tab_pulse_agents_ts}, one pane per line (every column past #3 may be
 # entirely absent on shorter lines).
 #
 # Output, one line per event:
-#   CLEAR\t<pane_id>          pane's stale @tab_pulse_state should be unset
-#                             (crashed/killed Claude — reverted to a shell)
+#   CLEAR\t<pane_id>          pane's stale @tab_pulse_state/agents should be
+#                             unset (crashed/killed Claude — reverted to a
+#                             shell, whether or not it had a state pushed:
+#                             a pane can carry a nonzero agent count with no
+#                             main state at all if SubagentStart fired before
+#                             any SessionStart/UserPromptSubmit ever did)
 #   WIN\t<window_id>\t<glyph> window's glyph changed since last tick, write it
 #   META\t<0|1>               1 if any window is currently claude-working OR
 #                             has one or more subagents actively running
@@ -58,12 +69,16 @@
 # anything. Simplified back to one idle state entirely rather than fixing
 # the clearing trigger.
 #
-# The subagent counter is tracked SEPARATELY, per window (summed across every
-# pane in it) rather than folded into this scale: a subagent can be running
-# regardless of what the main pane's own state says (working, idle, ...), so
-# it isn't "one more rung on the ladder" — it's an independent signal that
-# overrides the glyph choice below (but never attention, which always wins:
-# a genuine pending question outranks background busywork).
+# quota-error and attention are tracked as SEPARATE per-window flags (win-
+# quota/winattention below), not folded into the pr/maxpr ladder — a window
+# with one pane genuinely working (pr=5) and a SIBLING pane awaiting your
+# input would otherwise have maxpr settle on 5, masking the attention pane
+# entirely despite attention supposedly being the more urgent signal. The
+# subagent counter gets the same independent-flag treatment for the same
+# reason: a subagent can be running regardless of what the main pane's own
+# state says (working, idle, ...). Precedence among these THREE independent
+# signals is quota > attention > agents; only when none of them apply does
+# the ordinary pr/maxpr ladder (working > process > idle) decide the glyph.
 
 BEGIN {
   n = split(shells, sh, " ");  for (i = 1; i <= n; i++) is_shell[sh[i]] = 1
@@ -80,13 +95,18 @@ NF < 3 { next }
   state = (NF >= 4 ? $4 : ""); ts = (NF >= 5 ? $5 : "")
   agents = (NF >= 6 ? $6 + 0 : 0)
   agents_ts = (NF >= 7 ? $7 : "")
-  if (state != "" && (cmd in is_shell)) {
+  if ((state != "" || agents > 0) && (cmd in is_shell)) {
     # Claude exited without ever firing SessionEnd (killed, Ctrl-C'd) —
-    # whatever subagents it had are gone too, not just its main state. The
-    # CLEAR consumer (daemon.sh / tab_pulse_publish_window) unsets the pane
-    # options to match; zeroing agents here as well keeps THIS tick's own
-    # aggregation consistent with that instead of counting a crashed pane's
-    # stale leftover count for the one tick before the unset takes effect.
+    # whatever subagents it had are gone too, not just its main state. Also
+    # reachable with state=="" but agents>0: SubagentStart can fire before
+    # any SessionStart/UserPromptSubmit ever does (hooks installed mid-
+    # session), leaving a pane with only an agent count and no main state —
+    # that pane needs the same crash cleanup once it reverts to a shell. The
+    # CLEAR consumer (daemon.sh / tab_pulse_publish_window) unsets all four
+    # pane options to match; zeroing state/agents here as well keeps THIS
+    # tick's own aggregation consistent with that instead of counting a
+    # crashed pane's stale leftovers for the one tick before the unset takes
+    # effect.
     print "CLEAR\t" paneid
     state = ""
     agents = 0
@@ -98,13 +118,17 @@ NF < 3 { next }
     agents = 0
   }
   if (agents > 0) winagents[win] += agents
+  if (state == "quota_error")    winquota[win] = 1
+  if (state == "attention")      winattention[win] = 1
 
   pr = 1
   if (state != "") {
-    if (state == "quota_error")    pr = 6
-    else if (state == "working")   pr = 5
-    else if (state == "attention") pr = 4
-    else pr = 2 # "idle", or any other/unknown Claude state = claude-idle
+    # quota_error and attention are handled entirely via the winquota/
+    # winattention flags above, checked ahead of this ladder in END — they
+    # fold into the same pr=2 ("claude-idle") bucket here, since maxpr's
+    # only remaining job is choosing among working/process/idle for windows
+    # where neither flag applies.
+    pr = (state == "working") ? 5 : 2
     # Self-heal a "working" state that never got a matching Stop — e.g.
     # the user interrupted the turn (Esc/Ctrl-C), which does not fire
     # Stop, so nothing else would ever clear it. Only "working" is
@@ -129,9 +153,9 @@ END {
   for (w in maxpr) {
     pr = maxpr[w]
     agents = (w in winagents) ? winagents[w] : 0
-    if (pr == 6) {
+    if (w in winquota) {
       glyph = quota_style quota_glyph "#[default]"
-    } else if (pr == 4) {
+    } else if (w in winattention) {
       glyph = attention_style attention_glyph "#[default]"
     } else if (agents > 0) {
       glyph = agent_style agent_glyph agents "#[default]"

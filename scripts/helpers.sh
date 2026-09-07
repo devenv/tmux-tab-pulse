@@ -57,8 +57,16 @@ tab_pulse_working_stale_seconds() {
 # SessionStart/UserPromptSubmit since, would otherwise be indistinguishable
 # from an arbitrary background process and get the generic process marker
 # instead of anything Claude-specific.
+#
+# The default's backslash is DOUBLED (\\. not \.) deliberately: this value
+# is passed to classify.awk via `awk -v`, which does its own escape-sequence
+# processing on the assigned string before the regex engine sees it — a
+# single-escaped `\.` arrives as a bare `.` (matching ANY character, not
+# just a literal dot). Verified: with a single escape, the pattern matched
+# "2x1x263". A custom @tab-pulse-claude-version-pattern set by a user needs
+# the same doubling if it contains a literal `.`.
 tab_pulse_claude_version_pattern() {
-  tmux_get '@tab-pulse-claude-version-pattern' '^[0-9]+(\.[0-9]+){1,3}$'
+  tmux_get '@tab-pulse-claude-version-pattern' '^[0-9]+(\\.[0-9]+){1,3}$'
 }
 
 # Spinner frames, SPACE-SEPARATED (not one contiguous string) so the daemon
@@ -101,9 +109,10 @@ tab_pulse_quota_style() {
 # Shown whenever this window has one or more Task-tool subagents actively
 # running (SubagentStart pushed, no matching SubagentStop yet) — regardless
 # of the main pane's own state, since a background agent chugging away is
-# real ongoing work the main Stop/done/idle state alone can't see. Never
-# overrides attention (a genuine pending question always wins). The glyph
-# is followed by the live count, e.g. "⚙2".
+# real ongoing work the main working/idle state alone can't see. Never
+# overrides attention or quota-error (both take priority — see
+# classify.awk's winattention/winquota). The glyph is followed by the live
+# count, e.g. "⚙2".
 tab_pulse_agent_glyph() {
   tmux_get '@tab-pulse-agent-glyph' '⚙'
 }

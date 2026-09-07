@@ -162,17 +162,26 @@ busy-loop the daemon).
 
 ## Precedence
 
-Each pane in a window is classified, and the window shows the
-highest-priority pane's status:
+Each pane in a window is classified. quota-error, attention, and the
+subagent count are each tracked as an independent per-window flag — "does
+ANY pane in this window have this signal" — checked in that order ahead of
+everything else, rather than being just one more rung on a single ladder
+compared per-pane. That distinction matters in a split: a window with one
+pane genuinely working and a SIBLING pane awaiting your input shows the
+attention marker, not the spinner — if these were compared only by each
+pane's own priority number, the working pane's higher number would mask the
+attention pane entirely, which is backwards (an earlier version had exactly
+this bug). Only once none of quota-error/attention/agents apply does the
+ordinary per-pane ladder decide the glyph:
 
 ```
-claude-quota-error > claude-working > claude-attention > process > claude-idle > idle
+claude-working > process > claude-idle > idle
 ```
 
-A working or awaiting-you Claude pane always wins over a sibling process pane.
-A Claude pane that's merely idle, though, yields to a genuinely running
-process in another pane — so a dev server in a split still surfaces instead
-of being masked by a quiet Claude prompt.
+A working Claude pane always wins over a sibling process pane. A Claude
+pane that's merely idle, though, yields to a genuinely running process in
+another pane — so a dev server in a split still surfaces instead of being
+masked by a quiet Claude prompt.
 
 Running subagents are tracked separately from this ladder entirely (summed
 across every pane in the window) and override the glyph choice above — except

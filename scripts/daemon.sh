@@ -72,7 +72,18 @@ acquire_lock() {
 if ! acquire_lock; then
   exit 0
 fi
-cleanup() { rm -rf "$LOCKDIR" "$STATEFILE" "$STATEFILE.new" 2>/dev/null; }
+# Defense-in-depth, not a fix for a reproduced failure: verify the pid file
+# still names THIS process before deleting anything. As written, a losing
+# acquire_lock() call already exits before this trap is ever installed
+# (mkdir's atomicity plus the ordering above means only the actual winner
+# reaches this line), so a still-alive OTHER daemon deleting a NEWER one's
+# freshly-reclaimed lock isn't reachable through the paths this script
+# takes. The check costs one `cat` and stays correct even if that invariant
+# ever changes.
+cleanup() {
+  [ "$(cat "$LOCKDIR/pid" 2>/dev/null)" = "$$" ] || return 0
+  rm -rf "$LOCKDIR" "$STATEFILE" "$STATEFILE.new" 2>/dev/null
+}
 trap cleanup EXIT
 # A bare `trap cleanup INT TERM` would run cleanup but NOT stop the script —
 # bash resumes after the handler unless it exits explicitly, which would
@@ -140,17 +151,20 @@ while true; do
   agents_stale_seconds="$(tab_pulse_agents_stale_seconds)"
   now="$(date +%s)"
 
-  # One awk pass does everything: classify each pane, aggregate per window_id
-  # -> max-priority pane (higher wins — 6=claude-quota-error, 5=claude-working,
-  # 4=claude-attention, 3=process, 2=claude-idle, 1=idle), build that
-  # window's fully-styled glyph, and compare it against the previous tick's
-  # snapshot (loaded from STATEFILE) to decide whether it actually needs
-  # writing this time. Also flags "CLEAR" panes: ones that still carry a
-  # Claude @tab_pulse_state but whose foreground command has reverted to a
-  # plain shell — meaning Claude exited without ever firing SessionEnd (e.g.
-  # killed, Ctrl-C'd) and left a stale state behind. Those get their pane
-  # option unset below so they stop being treated as a Claude pane, and
-  # count as idle/process for this tick.
+  # One awk pass does everything: classify each pane, aggregate per window
+  # (quota-error and attention as independent per-window flags checked ahead
+  # of everything else, then the subagent count, then the ordinary per-pane
+  # ladder — working > process > idle — see classify.awk's own header
+  # comment for why quota/attention/agents are NOT just more rungs on that
+  # ladder), build the window's fully-styled glyph, and compare it against
+  # the previous tick's snapshot (loaded from STATEFILE) to decide whether
+  # it actually needs writing this time. Also flags "CLEAR" panes: ones that
+  # still carry a Claude @tab_pulse_state (or just a stale subagent count
+  # with no main state at all) but whose foreground command has reverted to
+  # a plain shell — meaning Claude exited without ever firing SessionEnd
+  # (e.g. killed, Ctrl-C'd) and left something stale behind. Those get their
+  # pane options unset below so they stop being treated as a Claude pane,
+  # and count as idle/process for this tick.
   #
   # Logic lives in classify.awk (see that file for why LC_ALL=C below is
   # load-bearing, not cosmetic) so it can be unit-tested directly — see

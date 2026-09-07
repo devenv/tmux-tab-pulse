@@ -106,8 +106,24 @@ run_claude_state() {
 }
 
 @test "a second daemon on the same socket exits immediately instead of running alongside the first" {
-  run timeout 2 bash "$SCRIPTS_DIR/daemon.sh"
-  [ "$status" -eq 0 ]
+  # `timeout` is a GNU coreutils command, not present on stock macOS (this
+  # repo's own explicit portability target) unless Homebrew coreutils
+  # happens to be installed — verified missing here without it. Backgrounded
+  # + wait avoids the dependency entirely, and is a strictly stronger
+  # assertion too: it confirms THIS SPECIFIC process declined the lock and
+  # exited 0, not merely "something exited 0 within 2 seconds" (which would
+  # also pass if the process hung for slightly under 2s for an unrelated
+  # reason and got killed by the timeout with a coincidental exit code).
+  # Not wrapped in `run` — verified `run wait "$pid"` doesn't compose here:
+  # a direct `wait` outside `run` correctly returns 0 for a background job
+  # that exits within ~1s, but the identical wait, only wrapped in `run`,
+  # reports a nonzero status for the same job. bats' `run` isn't a plain
+  # function call for job-control purposes.
+  bash "$SCRIPTS_DIR/daemon.sh" &
+  second_pid=$!
+  wait "$second_pid"
+  wait_status=$?
+  [ "$wait_status" -eq 0 ]
 }
 
 @test "the daemon exits on its own once the tmux server it was serving is gone" {

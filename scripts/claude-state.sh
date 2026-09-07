@@ -24,19 +24,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 state="${1:-}"
 
 # bump_agents <delta>
-# Reads the pane's current subagent counter (default 0 if unset/non-numeric),
-# adds <delta>, clamps at a 0 floor (a stray/duplicate SubagentStop must
-# never drive it negative), and re-stamps the timestamp so the daemon's
-# staleness self-heal (mirrors tab_pulse_working_stale_seconds — a missed
-# SubagentStop, e.g. from an interrupted parent turn, would otherwise leave
-# this stuck above 0 forever) has a fresh clock to measure from.
+# Reads the pane's current subagent counter, adds <delta>, clamps at a 0
+# floor (a stray/duplicate SubagentStop must never drive it negative), and
+# re-stamps the timestamp so the daemon's staleness self-heal (mirrors
+# tab_pulse_working_stale_seconds — a missed SubagentStop, e.g. from an
+# interrupted parent turn, would otherwise leave this stuck above 0 forever)
+# has a fresh clock to measure from.
+#
+# Locked (mkdir, keyed per-pane): this is a read-modify-write on a shared
+# tmux option, and parallel Task launches fire SubagentStart concurrently —
+# verified without the lock, 8 concurrent agent_start calls on one pane
+# settled at 2, not 8 (each reads the same stale value before any writes
+# land). The wait is capped at ~5s (100 * 50ms) as a safety valve: if
+# something else is somehow wedged holding the lock, degrading to "this one
+# push is dropped" is far better than hanging the hook — and therefore
+# Claude itself — indefinitely. Contention this heavy in practice is rare
+# (concurrent hook firings for the SAME pane, not just concurrent subagents
+# in general), so the lock's cost is negligible the overwhelming majority of
+# the time.
 bump_agents() {
-  local delta="$1" current
+  local delta="$1" current lockdir waited=0
+  lockdir="${TMPDIR:-/tmp}/tmux-tab-pulse-agents-$(printf '%s' "$TMUX_PANE" | tr -c 'A-Za-z0-9' '_').lock"
+  while ! mkdir "$lockdir" 2>/dev/null; do
+    waited=$((waited + 1))
+    [ "$waited" -gt 100 ] && break
+    sleep 0.05
+  done
+
   current="$(tmux show-option -pqv -t "$TMUX_PANE" @tab_pulse_agents 2>/dev/null)"
-  current=$((current + 0 + delta))
+  # Guard against a corrupted/non-numeric value: under `set -u`, bash
+  # arithmetic dereferences a bare word as a variable name, so
+  # $((current + delta)) with current="abc" aborts on "unbound variable"
+  # instead of just treating it as 0 — verified this crashes the hook
+  # (before publishing or waking the daemon) rather than degrading.
+  case "$current" in
+  '' | *[!0-9-]*) current=0 ;;
+  esac
+  current=$((current + delta))
   [ "$current" -lt 0 ] && current=0
   tmux set-option -p -t "$TMUX_PANE" @tab_pulse_agents "$current" >/dev/null 2>&1
   tmux set-option -p -t "$TMUX_PANE" @tab_pulse_agents_ts "$(date +%s)" >/dev/null 2>&1
+
+  rmdir "$lockdir" 2>/dev/null
 }
 
 case "$state" in
