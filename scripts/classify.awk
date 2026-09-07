@@ -11,7 +11,8 @@
 #     -v done_glyph="$done_glyph" -v done_style="$done_style" \
 #     -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
 #     -v process_glyph="$process_glyph" -v process_style="$process_style" \
-#     -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
+#     -v idle_glyph="$idle_glyph" -v idle_style="$idle_style" \
+#     -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
 #     -v claude_version_pattern="$claude_version_pattern" \
 #     -v stale_seconds="$stale_seconds" -v agents_stale_seconds="$agents_stale_seconds" \
 #     -v now="$now"
@@ -127,7 +128,7 @@ END {
     } else if (pr == 3) {
       glyph = process_style process_glyph "#[default]"
     } else {
-      glyph = idle_glyph
+      glyph = idle_style idle_glyph "#[default]"
     }
     if (!(w in prevglyph) || prevglyph[w] != glyph) print "WIN\t" w "\t" glyph
     print w "\t" glyph > statefile_new

@@ -100,6 +100,14 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
   [[ "$output" != *PROC* ]]
 }
 
+@test "the idle glyph is wrapped in its own style, like every other glyph" {
+  input="$(mktemp)"
+  row "@1" "%1" "zsh" "" "" >"$input"
+  run run_classify "$input" -v idle_style="DIM"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tDIMIDLE'* ]]
+}
+
 @test "process detection off: an unrelated running command is idle instead of a process" {
   input="$(mktemp)"
   row "@1" "%1" "long-running-build.sh" "" "" >"$input"

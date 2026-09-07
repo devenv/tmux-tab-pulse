@@ -134,6 +134,7 @@ while true; do
   process_glyph="$(tab_pulse_process_glyph)"
   process_style="$(tab_pulse_process_style)"
   idle_glyph="$(tab_pulse_idle_glyph)"
+  idle_style="$(tab_pulse_idle_style)"
   claude_version_pattern="$(tab_pulse_claude_version_pattern)"
   stale_seconds="$(tab_pulse_working_stale_seconds)"
   agents_stale_seconds="$(tab_pulse_agents_stale_seconds)"
@@ -161,7 +162,8 @@ while true; do
     -v done_glyph="$done_glyph" -v done_style="$done_style" \
     -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
     -v process_glyph="$process_glyph" -v process_style="$process_style" \
-    -v idle_glyph="$idle_glyph" -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
+    -v idle_glyph="$idle_glyph" -v idle_style="$idle_style" \
+    -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
     -v claude_version_pattern="$claude_version_pattern" \
     -v stale_seconds="$stale_seconds" -v agents_stale_seconds="$agents_stale_seconds" \
     -v now="$now" \

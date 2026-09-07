@@ -6,7 +6,7 @@ It answers one question at a glance, per tab, without switching into it: *is
 anything happening here?*
 
 ```
-myrepo         idle — nothing going on
+myrepo ○       idle — nothing going on (dim, easy to ignore)
 myrepo ⠹       Claude Code is working (animated spinner)
 myrepo ⚠       Claude Code needs you — a permission prompt or a question (red, alarming)
 myrepo ⏸       Claude Code just finished and you haven't started a new turn there since
@@ -152,7 +152,8 @@ busy-loop the daemon).
 | `@tab-pulse-agents-stale-seconds` | same as `@tab-pulse-working-stale-seconds` | Seconds a nonzero subagent count may sit with no fresh `SubagentStart`/`SubagentStop` before it's reset to 0 — self-heals a missed `SubagentStop` (e.g. the parent turn was interrupted). |
 | `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (distinct shape from attention's `⚠`). |
 | `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
-| `@tab-pulse-idle-glyph` | ` ` (space) | What renders in the reserved cell when idle. |
+| `@tab-pulse-idle-glyph` | `○` | What renders in the reserved cell when idle. Set to `' '` (space) to go back to a blank cell. |
+| `@tab-pulse-idle-style` | `#[fg=colour242]` (dim gray) | Style for the idle glyph — muted on purpose, so it stays easy to visually ignore next to the busier states. |
 | `@tab-pulse-process-detection` | `on` | Set to `off` to disable the plain-process marker entirely (Claude-only mode). |
 | `@tab-pulse-working-stale-seconds` | `900` | Seconds a pane may sit in `working` with no fresh push before it's treated as claude-idle instead — self-heals a turn interrupted (Esc/Ctrl-C) before Claude's `Stop` hook could fire, since that hook doesn't run on a user interrupt. `0` disables the check. Never applies to `attention`, which can legitimately wait a long time. |
 | `@tab-pulse-claude-version-pattern` | `^[0-9]+(\.[0-9]+){1,3}$` | ERE matching Claude Code's own `pane_current_command` shape (tmux reports its version string, e.g. `2.1.263`, not `claude`) — lets a pane with no hook-pushed state yet (predates the hooks being installed) still classify as claude-idle instead of the generic process marker. |

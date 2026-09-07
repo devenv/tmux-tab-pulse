@@ -130,7 +130,11 @@ tab_pulse_process_style() {
 }
 
 tab_pulse_idle_glyph() {
-  tmux_get '@tab-pulse-idle-glyph' ' '
+  tmux_get '@tab-pulse-idle-glyph' '○'
+}
+
+tab_pulse_idle_style() {
+  tmux_get '@tab-pulse-idle-style' '#[fg=colour242]'
 }
 
 tab_pulse_process_detection_enabled() {
@@ -206,7 +210,8 @@ tab_pulse_publish_window() {
       -v done_glyph="$(tab_pulse_done_glyph)" -v done_style="$(tab_pulse_done_style)" \
       -v agent_glyph="$(tab_pulse_agent_glyph)" -v agent_style="$(tab_pulse_agent_style)" \
       -v process_glyph="$(tab_pulse_process_glyph)" -v process_style="$(tab_pulse_process_style)" \
-      -v idle_glyph="$(tab_pulse_idle_glyph)" -v statefile="/dev/null" -v statefile_new="/dev/null" \
+      -v idle_glyph="$(tab_pulse_idle_glyph)" -v idle_style="$(tab_pulse_idle_style)" \
+      -v statefile="/dev/null" -v statefile_new="/dev/null" \
       -v claude_version_pattern="$(tab_pulse_claude_version_pattern)" \
       -v stale_seconds="$(tab_pulse_working_stale_seconds)" \
       -v agents_stale_seconds="$(tab_pulse_agents_stale_seconds)" -v now="$(date +%s)" \
