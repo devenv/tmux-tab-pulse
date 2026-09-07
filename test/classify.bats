@@ -29,7 +29,7 @@ run_classify() {
     -v detect="on" \
     -v working_style="" -v working_frame="SPIN" \
     -v attention_glyph="ATTN" -v attention_style="" \
-    -v done_glyph="DONE" -v done_style="" \
+    -v quota_glyph="QUOTA" -v quota_style="" \
     -v agent_glyph="AGENTS" -v agent_style="" \
     -v process_glyph="PROC" -v process_style="" \
     -v idle_glyph="IDLE" \
@@ -60,6 +60,26 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
   run run_classify "$input"
   rm -f "$input"
   [[ "$output" == *$'WIN\t@1\tATTN'* ]]
+}
+
+@test "quota_error pane: window glyph is the quota-error marker" {
+  input="$(mktemp)"
+  row "@1" "%1" "2.1.263" "quota_error" "$NOW" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tQUOTA'* ]]
+}
+
+@test "quota_error outranks attention, working, and a running subagent" {
+  input="$(mktemp)"
+  {
+    row "@1" "%1" "2.1.263" "quota_error" "$NOW"
+    row "@1" "%2" "2.1.263" "attention" "$NOW"
+    row "@1" "%3" "2.1.263" "working" "$NOW" "3" "$NOW"
+  } >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'WIN\t@1\tQUOTA'* ]]
 }
 
 @test "no-hook-state Claude pane (version-string command) classifies as idle, not the process marker" {
@@ -170,6 +190,20 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
   [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
 }
 
+@test "a CLEARed (crashed) pane's leftover agent count doesn't count either" {
+  # Regression test: a crashed Claude pane (reverted to a shell) used to
+  # still contribute its stale agent count to the window for this tick,
+  # since the CLEAR check only blanked `state`, not `agents` — read before
+  # the check, added to winagents unconditionally after it.
+  input="$(mktemp)"
+  row "@1" "%1" "zsh" "working" "$NOW" "2" "$NOW" >"$input"
+  run run_classify "$input"
+  rm -f "$input"
+  [[ "$output" == *$'CLEAR\t%1'* ]]
+  [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
+  [[ "$output" != *AGENTS* ]]
+}
+
 @test "highest-priority pane in a window wins: working beats a sibling process pane" {
   input="$(mktemp)"
   {
@@ -224,56 +258,17 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
   [[ "$output" == *$'WIN\t@1\tATTN'* ]]
 }
 
-@test "a done (finished, unseen) pane shows the done glyph, not idle" {
+@test "a legacy/unrecognized state (e.g. stale 'done' from an older hook config) folds into plain idle" {
+  # A finished turn no longer gets its own state — Stop pushes plain "idle"
+  # directly (see claude-hooks.json). This just confirms any OTHER unknown
+  # state string (a stale hook config from a previous version of this
+  # plugin, still installed on some already-running session) degrades
+  # gracefully to claude-idle rather than erroring or showing something odd.
   input="$(mktemp)"
   row "@1" "%1" "2.1.263" "done" "$NOW" >"$input"
   run run_classify "$input"
   rm -f "$input"
-  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
-}
-
-@test "done outranks a sibling process pane, but loses to attention and working" {
-  input="$(mktemp)"
-  {
-    row "@1" "%1" "long-running-build.sh" "" ""
-    row "@1" "%2" "2.1.263" "done" "$NOW"
-  } >"$input"
-  run run_classify "$input"
-  rm -f "$input"
-  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
-}
-
-@test "done persists even when its window is the one currently selected/attached" {
-  # Not auto-cleared by visiting the window — see classify.awk's header
-  # comment for why an earlier version's auto-clear-on-select was wrong.
-  input="$(mktemp)"
-  row "@1" "%1" "2.1.263" "done" "$NOW" >"$input"
-  run run_classify "$input"
-  rm -f "$input"
-  [[ "$output" == *$'WIN\t@1\tDONE'* ]]
-}
-
-@test "attention in a sibling pane outranks a done pane in the same window" {
-  input="$(mktemp)"
-  {
-    row "@1" "%1" "2.1.263" "done" "$NOW"
-    row "@1" "%2" "2.1.263" "attention" "$NOW"
-  } >"$input"
-  run run_classify "$input"
-  rm -f "$input"
-  [[ "$output" == *$'WIN\t@1\tATTN'* ]]
-}
-
-@test "a subagent running overrides an otherwise-done main state" {
-  # Regression test: the exact bug reported live — a session's main turn
-  # already Stopped (done) while a Task-tool subagent it spawned is still
-  # running. The agent count must win, not the stale "done".
-  input="$(mktemp)"
-  row "@1" "%1" "2.1.263" "done" "$NOW" "1" "$NOW" >"$input"
-  run run_classify "$input"
-  rm -f "$input"
-  [[ "$output" == *$'WIN\t@1\tAGENTS1'* ]]
-  [[ "$output" != *DONE* ]]
+  [[ "$output" == *$'WIN\t@1\tIDLE'* ]]
 }
 
 @test "a subagent running overrides plain idle too" {
@@ -342,21 +337,13 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
   input="$(mktemp)"
   row "@1" "%1" "2.1.263" "working" "$NOW" >"$input"
 
-  run_classify_frame() {
-    LC_ALL=C awk -F $'\t' \
-      -v shells="zsh bash sh fish" -v ignores="nvim vim less" -v detect="on" \
-      -v working_style="" -v working_frame="$1" \
-      -v attention_glyph="ATTN" -v attention_style="" \
-      -v process_glyph="PROC" -v process_style="" -v idle_glyph="IDLE" \
-      -v statefile="$STATEFILE" -v statefile_new="$STATEFILE.new" \
-      -v claude_version_pattern='^[0-9]+(\.[0-9]+){1,3}$' \
-      -v stale_seconds="900" -v now="$NOW" \
-      -f "$SCRIPTS_DIR/classify.awk" <"$input"
-  }
-
-  out1="$(run_classify_frame "⠴")"
+  # run_classify already forwards extra args, so overriding just
+  # working_frame per call is enough — no need for a second, separately
+  # hand-maintained awk invocation that can (and did) drift out of sync
+  # with run_classify's own defaults as new -v params were added.
+  out1="$(run_classify "$input" -v working_frame="⠴")"
   mv "$STATEFILE.new" "$STATEFILE"
-  out2="$(run_classify_frame "⠦")"
+  out2="$(run_classify "$input" -v working_frame="⠦")"
   rm -f "$input"
 
   [[ "$out1" == *$'WIN\t@1\t⠴'* ]]

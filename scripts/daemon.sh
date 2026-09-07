@@ -127,8 +127,8 @@ while true; do
   working_style="$(tab_pulse_working_style)"
   attention_glyph="$(tab_pulse_attention_glyph)"
   attention_style="$(tab_pulse_attention_style)"
-  done_glyph="$(tab_pulse_done_glyph)"
-  done_style="$(tab_pulse_done_style)"
+  quota_glyph="$(tab_pulse_quota_glyph)"
+  quota_style="$(tab_pulse_quota_style)"
   agent_glyph="$(tab_pulse_agent_glyph)"
   agent_style="$(tab_pulse_agent_style)"
   process_glyph="$(tab_pulse_process_glyph)"
@@ -141,8 +141,8 @@ while true; do
   now="$(date +%s)"
 
   # One awk pass does everything: classify each pane, aggregate per window_id
-  # -> max-priority pane (higher wins — 5=claude-working, 4=claude-attention,
-  # 3.5=claude-done(unseen), 3=process, 2=claude-idle, 1=idle), build that
+  # -> max-priority pane (higher wins — 6=claude-quota-error, 5=claude-working,
+  # 4=claude-attention, 3=process, 2=claude-idle, 1=idle), build that
   # window's fully-styled glyph, and compare it against the previous tick's
   # snapshot (loaded from STATEFILE) to decide whether it actually needs
   # writing this time. Also flags "CLEAR" panes: ones that still carry a
@@ -159,7 +159,7 @@ while true; do
     -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
     -v working_style="$working_style" -v working_frame="${FRAMES[$frame_index]}" \
     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
-    -v done_glyph="$done_glyph" -v done_style="$done_style" \
+    -v quota_glyph="$quota_glyph" -v quota_style="$quota_style" \
     -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
     -v process_glyph="$process_glyph" -v process_style="$process_style" \
     -v idle_glyph="$idle_glyph" -v idle_style="$idle_style" \
@@ -176,6 +176,9 @@ while true; do
     case "$kind" in
     CLEAR)
       tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_ts >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_agents >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_agents_ts >/dev/null 2>&1
       ;;
     WIN)
       tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1

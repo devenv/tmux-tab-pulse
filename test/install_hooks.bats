@@ -8,7 +8,7 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd -P)"
 INSTALLER="$REPO_ROOT/scripts/install-claude-hooks.sh"
 STATE_SCRIPT="$REPO_ROOT/scripts/claude-state.sh"
-EVENTS="SessionStart UserPromptSubmit Stop Notification SessionEnd"
+EVENTS="SessionStart UserPromptSubmit Stop Notification SessionEnd SubagentStart SubagentStop StopFailure"
 
 setup() {
   SETTINGS_DIR="$(mktemp -d)"
@@ -61,6 +61,30 @@ teardown() {
   jq -e '[.hooks.Stop[].hooks[].command] | index("some-other-tool")' "$CLAUDE_SETTINGS_PATH" >/dev/null
 }
 
+@test "a stale entry of ours MIXED into another tool's block is replaced, not duplicated" {
+  # Regression test: select() over a generator (.hooks[]?) re-emits the
+  # WHOLE block if ANY of its inner hooks match — so a block mixing our
+  # entry with another tool's passed both the "== script" detection check
+  # and the "!= script" removal filter as one unfiltered unit, meaning a
+  # stale arg value here would sit right next to a freshly-appended
+  # duplicate instead of being replaced. The previous test covers the same
+  # tools coexisting in SEPARATE blocks, which never exercised this.
+  # "done" was an old value of Stop's arg (the plugin has changed it more
+  # than once); current is "idle" — the point is any past-vs-current
+  # mismatch triggers replacement, not either specific value.
+  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"some-other-tool"},{"type":"command","command":"%s","args":["done"]}]}]}}\n' \
+    "$STATE_SCRIPT" >"$CLAUDE_SETTINGS_PATH"
+
+  run bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Stop"* ]]
+  [ "$(jq '[.hooks.Stop[].hooks[] | select(.command == $script)] | length' \
+    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" -eq 1 ]
+  [ "$(jq -r '.hooks.Stop[].hooks[] | select(.command == $script) | .args[0]' \
+    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" = "idle" ]
+  jq -e '[.hooks.Stop[].hooks[].command] | index("some-other-tool")' "$CLAUDE_SETTINGS_PATH" >/dev/null
+}
+
 @test "running it twice is a no-op the second time" {
   bash "$INSTALLER" >/dev/null
   before="$(cat "$CLAUDE_SETTINGS_PATH")"
@@ -97,11 +121,12 @@ teardown() {
 }
 
 @test "a stale arg value from an older template version gets replaced, not left alongside the new one" {
-  # Regression test: an earlier version of this plugin pushed "idle" on
-  # Stop; this one pushes "done". A command-only presence check would call
-  # Stop "already installed" forever and never pick up the new arg — seed
-  # exactly that stale shape and confirm a re-run corrects it in place.
-  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s","args":["idle"]}]}]}}\n' \
+  # Regression test: this plugin's Stop arg has changed more than once as
+  # its state model evolved (most recently done -> idle). A command-only
+  # presence check would call Stop "already installed" forever and never
+  # pick up the new arg — seed a stale shape and confirm a re-run corrects
+  # it in place.
+  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s","args":["done"]}]}]}}\n' \
     "$STATE_SCRIPT" >"$CLAUDE_SETTINGS_PATH"
 
   run bash "$INSTALLER"
@@ -110,5 +135,5 @@ teardown() {
   [ "$(jq '[.hooks.Stop[].hooks[] | select(.command == $script)] | length' \
     --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" -eq 1 ]
   [ "$(jq -r '.hooks.Stop[].hooks[] | select(.command == $script) | .args[0]' \
-    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" = "done" ]
+    --arg script "$STATE_SCRIPT" "$CLAUDE_SETTINGS_PATH")" = "idle" ]
 }

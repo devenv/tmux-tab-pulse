@@ -9,9 +9,9 @@ anything happening here?*
 myrepo ○       idle — nothing going on (dim, easy to ignore)
 myrepo ⠹       Claude Code is working (animated spinner)
 myrepo ⚠       Claude Code needs you — a permission prompt or a question (red, alarming)
-myrepo ⏸       Claude Code just finished and you haven't started a new turn there since
 myrepo ⚙2      2 Task-tool subagents are actively running in this window
 myrepo ●       a plain process is running (script, dev server, …) — light yellow
+myrepo ⛔       a turn ended via a rate limit or billing/spend-cap error (orange, outranks everything)
 ```
 
 The cell is always reserved — the tab's width never changes as it switches
@@ -28,7 +28,7 @@ another pane, Claude's status wins.
   (`@tab_pulse`). `window-status-format` just reads that option — no
   per-window subprocess, no shelling out from the status line itself.
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks) push state
-  ("working" / "attention" / "done" / "idle") onto whichever pane Claude is
+  ("working" / "attention" / "idle") onto whichever pane Claude is
   running in, via `$TMUX_PANE`. This is optional — the plugin works for plain
   processes with zero Claude Code integration. The hook script also pushes an
   immediate update itself the moment a hook fires — showing the correct glyph
@@ -38,24 +38,20 @@ another pane, Claude's status wins.
   to be in. Without this, a turn could start and finish before the daemon's
   own poll ever noticed it, or the spinner could sit frozen on its first
   frame for up to `@tab-pulse-idle-interval`.
-- **A finished turn isn't the same as one you've actually looked at**: `Stop`
-  maps to `done`, not straight to plain `idle` — a distinct glyph (⏸ by
-  default) for "Claude finished", so a completed unattended agent loop
-  doesn't look identical to a tab that's been sitting untouched for an hour.
-  It persists until that pane's own next real state change — a fresh
-  `UserPromptSubmit` (a new turn) or `SessionEnd` — NOT just by switching to
-  or selecting that window. An earlier version auto-cleared it the instant
-  an attached client's active window matched, which meant switching to the
-  very tab you wanted to check made the marker disappear before you'd had a
-  chance to look at anything.
 - **Subagents get their own signal, independent of the main state**:
   `SubagentStart`/`SubagentStop` maintain a live count of Task-tool
   subagents running in a pane. A window with one or more active subagents
-  shows a count (`⚙2` by default) instead of `done`/idle/process — even if
+  shows a count (`⚙2` by default) instead of idle/process — even if
   the MAIN turn already Stopped, since background agent work is real,
   ongoing activity the main state alone can't see. Never overrides
   `attention`: a genuine pending question always wins over background
   busywork.
+- **A turn that ended via an API error gets its own marker, above
+  everything else**: Claude Code's `StopFailure` hook (matchers `rate_limit`
+  and `billing_error`) maps to `quota_error` — a rate limit or a
+  billing/spend-cap hit, not a normal completion. Outranks `attention`
+  itself: a broken turn needing a model switch or a wait is a more urgent
+  signal than a routine pending question.
 - **Red means a genuine ask, not just "a turn ended"**: only
   `Notification`'s `permission_prompt`/`agent_needs_input` matchers — which
   specifically mean Claude is blocked waiting on you for something — turn the
@@ -112,9 +108,11 @@ marker, register the plugin's hooks into Claude Code's settings:
 ```
 
 This appends entries to `~/.claude/settings.json` (backing up the original
-first) for `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, and
-`SessionEnd`. It's safe to re-run — idempotent per event, not just
-all-or-nothing: if you (or something else) later remove just one or two of
+first) for `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`,
+`SessionEnd`, `SubagentStart`, `SubagentStop`, and `StopFailure`. It's safe
+to re-run — idempotent per event, not just all-or-nothing: if you (or
+something else)
+later remove just one or two of
 these hooks by hand, re-running restores only what's missing rather than
 seeing anything and doing nothing. Without this step, tmux-tab-pulse still
 shows the static process marker for any other running command; it just
@@ -141,15 +139,15 @@ busy-loop the daemon).
 |---|---|---|
 | `@tab-pulse-interval` | `500` | Tick length in ms while anything is in the `working` state (drives spinner animation speed). |
 | `@tab-pulse-idle-interval` | `2000` | Tick length in ms when nothing is working (still needs to catch processes starting/stopping and Claude turns finishing). |
-| `@tab-pulse-spinner` *(load-time only)* | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. Read once into the daemon's frame list at startup. |
+| `@tab-pulse-spinner` *(load-time only for the daemon's own animation)* | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` | Space-separated animation frames for the `working` state. Read once into the daemon's frame list at startup — restart it to pick up a change. The hook script's own one-off immediate push (frame 0, as a placeholder until the daemon's next tick takes over) reads it fresh each time, so a mid-session change shows up there first. |
 | `@tab-pulse-working-style` | `#[fg=colour45]` | tmux style prefix applied to the spinner. |
 | `@tab-pulse-attention-glyph` | `⚠` | Glyph shown when Claude genuinely needs you (permission prompt / question). |
 | `@tab-pulse-attention-style` | `#[fg=red,bold]` | Style for the attention glyph. |
-| `@tab-pulse-done-glyph` | `⏸` | Glyph shown when Claude finished a turn (`Stop`), until the pane's next real state change. |
-| `@tab-pulse-done-style` | `#[fg=colour81]` | Style for the done glyph. |
+| `@tab-pulse-quota-glyph` | `⛔` | Glyph shown when a turn ended via a rate limit or billing/spend-cap error (`StopFailure`), outranking every other state. |
+| `@tab-pulse-quota-style` | `#[fg=colour208,bold]` (orange, bold) | Style for the quota-error glyph. |
 | `@tab-pulse-agent-glyph` | `⚙` | Glyph prefix shown when one or more Task-tool subagents are running in the window, followed by the live count (e.g. `⚙2`). |
 | `@tab-pulse-agent-style` | `#[fg=colour213]` | Style for the agent-count glyph. |
-| `@tab-pulse-agents-stale-seconds` | same as `@tab-pulse-working-stale-seconds` | Seconds a nonzero subagent count may sit with no fresh `SubagentStart`/`SubagentStop` before it's reset to 0 — self-heals a missed `SubagentStop` (e.g. the parent turn was interrupted). |
+| *(no separate option)* | — | The subagent counter's staleness self-heal (a nonzero count reset to 0 after no fresh `SubagentStart`/`SubagentStop`, mirroring `working`'s) deliberately reuses `@tab-pulse-working-stale-seconds` rather than having its own knob — set that one option to change both. |
 | `@tab-pulse-process-glyph` | `●` | Glyph shown for a plain running process (distinct shape from attention's `⚠`). |
 | `@tab-pulse-process-style` | `#[fg=colour229]` (light yellow) | Style for the process glyph. |
 | `@tab-pulse-idle-glyph` | `○` | What renders in the reserved cell when idle. Set to `' '` (space) to go back to a blank cell. |
@@ -168,15 +166,13 @@ Each pane in a window is classified, and the window shows the
 highest-priority pane's status:
 
 ```
-claude-working > claude-attention > claude-done(unseen) > process > claude-idle > idle
+claude-quota-error > claude-working > claude-attention > process > claude-idle > idle
 ```
 
 A working or awaiting-you Claude pane always wins over a sibling process pane.
 A Claude pane that's merely idle, though, yields to a genuinely running
 process in another pane — so a dev server in a split still surfaces instead
-of being masked by a quiet Claude prompt. A finished-but-unseen pane still
-outranks a plain process, since "Claude wants your attention (eventually)"
-matters more than "a script is running".
+of being masked by a quiet Claude prompt.
 
 Running subagents are tracked separately from this ladder entirely (summed
 across every pane in the window) and override the glyph choice above — except

@@ -11,6 +11,7 @@
 # under test talks to our private server without knowing it's a test.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck disable=SC2034 # used by every *.bats file that `load`s this helper
 SCRIPTS_DIR="$REPO_ROOT/scripts"
 
 # tab_pulse_tmux <args...>
@@ -64,7 +65,9 @@ EOF
   tab_pulse_tmux new-session -d -s test -x 80 -y 24 /bin/sh
   tab_pulse_tmux set-option -g default-shell /bin/sh
   tab_pulse_tmux set-option -g default-command /bin/sh
+  # shellcheck disable=SC2034 # used by every calling test file
   TEST_PANE="$(tab_pulse_tmux display-message -p -t test -F '#{pane_id}')"
+  # shellcheck disable=SC2034 # used by every calling test file
   TEST_WINDOW="$(tab_pulse_tmux display-message -p -t test -F '#{window_id}')"
 }
 

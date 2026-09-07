@@ -8,10 +8,11 @@
 # a tmux plugin should silently do on every reload.
 #
 # Idempotent per EVENT: re-running only installs whichever of our events
-# (SessionStart/UserPromptSubmit/Stop/Notification/SessionEnd) aren't already
-# present, rather than an all-or-nothing check — so if you (or something else)
-# removed just one of them, re-running restores only that one instead of
-# reporting "already installed" and doing nothing.
+# (SessionStart/UserPromptSubmit/Stop/Notification/SessionEnd/SubagentStart/
+# SubagentStop/StopFailure) aren't already present, rather than an
+# all-or-nothing check — so if you (or something else) removed just one of
+# them, re-running restores only that one instead of reporting "already
+# installed" and doing nothing.
 #
 # Requires: jq (1.6+, for `walk`).
 
@@ -55,14 +56,27 @@ jq --arg script "$STATE_SCRIPT" '
 
 # Which of our events need (re-)installing? Not just "missing" — an event
 # also needs updating if OUR OWN entries under it don't match the current
-# template anymore (e.g. Stop's arg changing from "idle" to "done" between
-# versions of this plugin). Comparing whole hook-block equality, not just
-# "does our command appear at all", is what catches that: a stale arg value
-# would otherwise pass a command-only check forever and never update on
-# reinstall. Not merely "does the script path appear anywhere in the file"
-# either — that check could both false-positive on an unrelated mention of
-# the path and false-negative on partial removal (e.g. hand-deleting just
-# UserPromptSubmit+Stop still said "already installed").
+# template anymore (this plugin's Stop arg has changed more than once as its
+# state model evolved). Comparing our own hook entries (flattened across
+# whatever blocks they happen to live in, ignoring matcher/block structure —
+# matchers only matter for telling OTHER tools' entries apart, not for
+# checking whether OUR OWN args are current) against the template, rather
+# than just "does our command appear at all", is what catches that: a stale
+# arg value would otherwise pass a command-only check forever and never
+# update on reinstall. Not merely "does the script path appear anywhere in
+# the file" either — that check could both false-positive on an unrelated
+# mention of the path and false-negative on partial removal (e.g.
+# hand-deleting just UserPromptSubmit+Stop still said "already installed").
+#
+# Deliberately NOT `map(select(.hooks[]?.command == $script))` on the whole
+# block array: select() over a generator (.hooks[]?) re-emits the WHOLE
+# block if ANY of its inner hooks match, so a block mixing our entry with
+# another tool's (uncommon, but a real shape jq itself will produce if two
+# tools' installers ever both target the same block) would pass through
+# untouched either way — verified: querying for `== script` and `!= script`
+# on the same mixed block both return the entire block unfiltered. Pulling
+# .hooks[]? out to its own generator, one level up, compares individual
+# entries instead of whole blocks.
 MISSING_JSON="$(jq -n \
   --slurpfile settings "$SETTINGS" \
   --slurpfile new "$RENDERED" \
@@ -70,8 +84,9 @@ MISSING_JSON="$(jq -n \
     ($settings[0].hooks // {}) as $orig
     | ($new[0].hooks) as $newhooks
     | [ $newhooks | keys[] as $e
-        | (($orig[$e] // []) | map(select(.hooks[]?.command == $script))) as $ours
-        | select($ours != $newhooks[$e])
+        | ([($orig[$e] // [])[].hooks[]? | select(.command == $script)]) as $ours
+        | ([$newhooks[$e][].hooks[]?]) as $wanted
+        | select($ours != $wanted)
         | $e
       ]
 ')"
@@ -86,10 +101,17 @@ cp "$SETTINGS" "$BACKUP"
 echo "backed up existing settings to $BACKUP"
 
 # For each event needing (re-)installing: drop OUR OWN existing entries
-# (identified by command, regardless of their args — so a stale "idle" gets
-# removed, not left alongside the new "done") and append the current
+# (identified by command, regardless of their args — so a stale arg value
+# gets replaced, not left alongside the fresh one) and append the current
 # template, on top of whatever hooks already exist there from OTHER tools
 # (untouched either way, since the filter only matches our own command).
+#
+# Filters each block's INNER .hooks array (dropping the block itself only if
+# that empties it completely) rather than the outer block array — the same
+# select-over-a-generator issue as above meant a block mixing our entry with
+# another tool's was kept (or dropped) as one unfiltered unit either way,
+# so a mixed block would end up with the STALE version of our entry sitting
+# right next to the freshly-appended new one instead of being replaced.
 jq \
   --slurpfile new "$RENDERED" \
   --argjson missing "$MISSING_JSON" \
@@ -98,7 +120,9 @@ jq \
     | .hooks = (
         reduce ($missing[]) as $event ($orig;
           .[$event] = (
-            (($orig[$event] // []) | map(select(.hooks[]?.command != $script)))
+            (($orig[$event] // [])
+              | map(.hooks |= map(select(.command != $script)))
+              | map(select(.hooks | length > 0)))
             + $new[0].hooks[$event]
           )
         )

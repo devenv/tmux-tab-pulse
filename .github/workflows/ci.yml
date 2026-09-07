@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh
+        run: shellcheck -x scripts/*.sh tab-pulse.tmux test/test_helper.bash
 
   test:
     strategy:
@@ -33,6 +33,20 @@ jobs:
       - name: Install tmux and bats (macOS)
         if: runner.os == 'macOS'
         run: brew install tmux bats-core jq
+
+      - name: Verify bash version (macOS)
+        # None of the above are known to pull in a newer bash as a dependency,
+        # so `#!/usr/bin/env bash` should still resolve to the stock 3.2 this
+        # code's own comments call out as a design constraint - but that's an
+        # assumption about the runner image, not a guarantee. Fail loudly if
+        # it ever stops holding, rather than silently losing bash-3.2 coverage.
+        if: runner.os == 'macOS'
+        run: |
+          bash --version
+          [[ "$(bash --version)" == *"version 3."* ]] || {
+            echo "::error::Default bash is not 3.x - this job no longer exercises the bash-3.2 compatibility this code depends on. See comments in scripts/daemon.sh."
+            exit 1
+          }
 
       - name: Run test suite
         run: bats test/*.bats

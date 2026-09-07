@@ -82,19 +82,20 @@ tab_pulse_attention_style() {
   tmux_get '@tab-pulse-attention-style' '#[fg=red,bold]'
 }
 
-# Shown for a window whose Claude turn just finished (Stop fired) — distinct
-# from a plain idle pane so a finished turn doesn't look identical to one
-# that's been sitting untouched for an hour. Persists until that pane's own
-# next real state change (a fresh UserPromptSubmit, or SessionEnd) — NOT
-# cleared just by visiting the window. It used to auto-clear on that, which
-# meant switching to the very tab you wanted to check made the marker
-# disappear before you'd had a chance to look at anything.
-tab_pulse_done_glyph() {
-  tmux_get '@tab-pulse-done-glyph' '⏸'
+# Shown when a turn ends abnormally via an API-level error — a rate limit or
+# a billing/spend-cap hit (Claude Code's StopFailure hook, matchers
+# rate_limit/billing_error) — rather than a normal completion. Outranks
+# EVERY other state, attention included: a broken turn needing a model
+# switch or a wait is a more urgent signal than "still generating" or "a
+# routine pending question". No staleness self-heal needed — the user's
+# next UserPromptSubmit (a retry) naturally supersedes it like any other
+# state transition.
+tab_pulse_quota_glyph() {
+  tmux_get '@tab-pulse-quota-glyph' '⛔'
 }
 
-tab_pulse_done_style() {
-  tmux_get '@tab-pulse-done-style' '#[fg=colour81]'
+tab_pulse_quota_style() {
+  tmux_get '@tab-pulse-quota-style' '#[fg=colour208,bold]'
 }
 
 # Shown whenever this window has one or more Task-tool subagents actively
@@ -207,7 +208,7 @@ tab_pulse_publish_window() {
       -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
       -v working_style="$(tab_pulse_working_style)" -v working_frame="$frame" \
       -v attention_glyph="$(tab_pulse_attention_glyph)" -v attention_style="$(tab_pulse_attention_style)" \
-      -v done_glyph="$(tab_pulse_done_glyph)" -v done_style="$(tab_pulse_done_style)" \
+      -v quota_glyph="$(tab_pulse_quota_glyph)" -v quota_style="$(tab_pulse_quota_style)" \
       -v agent_glyph="$(tab_pulse_agent_glyph)" -v agent_style="$(tab_pulse_agent_style)" \
       -v process_glyph="$(tab_pulse_process_glyph)" -v process_style="$(tab_pulse_process_style)" \
       -v idle_glyph="$(tab_pulse_idle_glyph)" -v idle_style="$(tab_pulse_idle_style)" \
@@ -219,7 +220,12 @@ tab_pulse_publish_window() {
 
   while IFS=$'\t' read -r kind a b; do
     case "$kind" in
-    CLEAR) tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1 ;;
+    CLEAR)
+      tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_ts >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_agents >/dev/null 2>&1
+      tmux set-option -pu -t "$a" @tab_pulse_agents_ts >/dev/null 2>&1
+      ;;
     WIN) tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1 ;;
     esac
   done <<<"$aggregated"

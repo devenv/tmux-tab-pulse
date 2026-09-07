@@ -4,11 +4,11 @@
 # tmux server or daemon loop.
 #
 # Invoke as (daemon.sh does exactly this):
-#   printf '%s\n' "$panes" | LC_ALL=C awk -f classify.awk \
+#   printf '%s\n' "$panes" | LC_ALL=C awk -F $'\t' -f classify.awk \
 #     -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
 #     -v working_style="$working_style" -v working_frame="$frame" \
 #     -v attention_glyph="$attention_glyph" -v attention_style="$attention_style" \
-#     -v done_glyph="$done_glyph" -v done_style="$done_style" \
+#     -v quota_glyph="$quota_glyph" -v quota_style="$quota_style" \
 #     -v agent_glyph="$agent_glyph" -v agent_style="$agent_style" \
 #     -v process_glyph="$process_glyph" -v process_style="$process_style" \
 #     -v idle_glyph="$idle_glyph" -v idle_style="$idle_style" \
@@ -42,21 +42,28 @@
 # not it changed), for next tick's change-detection.
 #
 # Priority scale (higher wins when aggregating panes within one window):
-#   5=claude-working 4=claude-attention 3.5=claude-done(unseen) 3=process
+#   6=claude-quota-error 5=claude-working 4=claude-attention 3=process
 #   2=claude-idle 1=idle
-# "done" persists until the pane's own next real state change (a fresh
-# UserPromptSubmit, or SessionEnd) — NOT cleared just because its window
-# happens to be the one currently selected/attached. An earlier version
-# auto-downgraded it the instant an attached client's active window matched,
-# which meant switching to the very tab you wanted to check made the pause
-# marker disappear before you'd actually had a chance to look at anything.
+# "quota-error" (Claude Code's StopFailure hook, matchers rate_limit /
+# billing_error) outranks EVERYTHING, attention included: a turn that ended
+# via a rate limit or a billing/spend-cap hit is a more urgent signal than
+# "still generating" or "a routine pending question" — you likely need to
+# switch models or wait, not just answer a prompt.
+#
+# A finished turn (Stop) folds into plain claude-idle rather than getting
+# its own tier — an earlier version distinguished "finished, unseen" from
+# "idle" with its own glyph, auto-clearing the instant an attached client's
+# active window matched, which meant switching to the very tab you wanted
+# to check made the marker disappear before you'd had a chance to look at
+# anything. Simplified back to one idle state entirely rather than fixing
+# the clearing trigger.
 #
 # The subagent counter is tracked SEPARATELY, per window (summed across every
 # pane in it) rather than folded into this scale: a subagent can be running
-# regardless of what the main pane's own state says (working, done, even
-# idle), so it isn't "one more rung on the ladder" — it's an independent
-# signal that overrides the glyph choice below (but never attention, which
-# always wins: a genuine pending question outranks background busywork).
+# regardless of what the main pane's own state says (working, idle, ...), so
+# it isn't "one more rung on the ladder" — it's an independent signal that
+# overrides the glyph choice below (but never attention, which always wins:
+# a genuine pending question outranks background busywork).
 
 BEGIN {
   n = split(shells, sh, " ");  for (i = 1; i <= n; i++) is_shell[sh[i]] = 1
@@ -74,8 +81,15 @@ NF < 3 { next }
   agents = (NF >= 6 ? $6 + 0 : 0)
   agents_ts = (NF >= 7 ? $7 : "")
   if (state != "" && (cmd in is_shell)) {
+    # Claude exited without ever firing SessionEnd (killed, Ctrl-C'd) —
+    # whatever subagents it had are gone too, not just its main state. The
+    # CLEAR consumer (daemon.sh / tab_pulse_publish_window) unsets the pane
+    # options to match; zeroing agents here as well keeps THIS tick's own
+    # aggregation consistent with that instead of counting a crashed pane's
+    # stale leftover count for the one tick before the unset takes effect.
     print "CLEAR\t" paneid
     state = ""
+    agents = 0
   }
   # Self-heal a stuck subagent counter the same way "working" is healed
   # below: if SubagentStop was ever missed (parent turn interrupted, Claude
@@ -87,10 +101,10 @@ NF < 3 { next }
 
   pr = 1
   if (state != "") {
-    if (state == "working")        pr = 5
+    if (state == "quota_error")    pr = 6
+    else if (state == "working")   pr = 5
     else if (state == "attention") pr = 4
-    else if (state == "done")      pr = 3.5
-    else pr = 2 # any other/unknown Claude state = claude-idle
+    else pr = 2 # "idle", or any other/unknown Claude state = claude-idle
     # Self-heal a "working" state that never got a matching Stop — e.g.
     # the user interrupted the turn (Esc/Ctrl-C), which does not fire
     # Stop, so nothing else would ever clear it. Only "working" is
@@ -115,7 +129,9 @@ END {
   for (w in maxpr) {
     pr = maxpr[w]
     agents = (w in winagents) ? winagents[w] : 0
-    if (pr == 4) {
+    if (pr == 6) {
+      glyph = quota_style quota_glyph "#[default]"
+    } else if (pr == 4) {
       glyph = attention_style attention_glyph "#[default]"
     } else if (agents > 0) {
       glyph = agent_style agent_glyph agents "#[default]"
@@ -123,8 +139,6 @@ END {
     } else if (pr == 5) {
       glyph = working_style working_frame "#[default]"
       any_working = 1
-    } else if (pr == 3.5) {
-      glyph = done_style done_glyph "#[default]"
     } else if (pr == 3) {
       glyph = process_style process_glyph "#[default]"
     } else {

@@ -44,10 +44,18 @@ run_claude_state() {
   [[ "$result" == *"$(tab_pulse_attention_glyph)"* ]]
 }
 
-@test "pushing 'done' (Stop) immediately publishes the done glyph" {
-  run run_claude_state done
+@test "pushing 'quota_error' (StopFailure) immediately publishes the quota-error glyph" {
+  run run_claude_state quota_error
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
-  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
+  [[ "$result" == *"$(tab_pulse_quota_glyph)"* ]]
+}
+
+@test "pushing 'idle' (Stop) immediately publishes the idle glyph, not the spinner" {
+  run_claude_state working
+  run run_claude_state idle
+  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
+  [[ "$result" == *"$(tab_pulse_idle_glyph)"* ]]
+  [[ "$result" != *"$(tab_pulse_spinner_frames | cut -d' ' -f1)"* ]]
 }
 
 @test "pushing 'clear' (SessionEnd) removes both the state and timestamp" {
@@ -105,14 +113,14 @@ run_claude_state() {
   [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_agents)" = "0" ]
 }
 
-@test "a running subagent publishes the agent-count glyph, overriding a stale done state" {
+@test "a running subagent publishes the agent-count glyph, overriding a finished (idle) main state" {
   # Regression test: the exact bug reported live (a session's main turn
   # already Stopped while a Task-tool subagent it spawned is still running).
-  run_claude_state done
+  run_claude_state idle
   run run_claude_state agent_start
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [[ "$result" == *"$(tab_pulse_agent_glyph)1"* ]]
-  [[ "$result" != *"$(tab_pulse_done_glyph)"* ]]
+  [[ "$result" != *"$(tab_pulse_idle_glyph)"* ]]
 }
 
 @test "SessionEnd (clear) resets the subagent counter too" {

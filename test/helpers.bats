@@ -92,15 +92,13 @@ teardown() {
   [[ "$result" == *"$(tab_pulse_attention_glyph)"* ]]
 }
 
-@test "tab_pulse_publish_window: a done (finished, unseen) pane writes the done glyph" {
+@test "tab_pulse_publish_window: a quota_error pane writes the quota-error glyph" {
   tab_pulse_tmux send-keys -t "$TEST_PANE" 'exec sleep 300' Enter
   sleep 0.3
-  tab_pulse_tmux set-option -p -t "$TEST_PANE" @tab_pulse_state done
+  tab_pulse_tmux set-option -p -t "$TEST_PANE" @tab_pulse_state quota_error
   tab_pulse_publish_window "$TEST_WINDOW"
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
-  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
-  # And the state itself must still say "done" — not seen, not cleared.
-  [ "$(tab_pulse_tmux show-option -p -t "$TEST_PANE" -v @tab_pulse_state)" = "done" ]
+  [[ "$result" == *"$(tab_pulse_quota_glyph)"* ]]
 }
 
 @test "tab_pulse_publish_window: a working Claude pane wins over a sibling process pane" {

@@ -87,33 +87,17 @@ run_claude_state() {
   [[ "$result" != *"$(tab_pulse_spinner_frames | cut -d' ' -f1)"* ]]
 }
 
-@test "the daemon shows done (finished, unseen) after Stop, and keeps it" {
-  run_claude_state working
-  sleep 0.2
-  run_claude_state done
-  sleep 0.3
-  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
-  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
-  # It must persist across the daemon's own later ticks too, not just the
-  # instant of claude-state.sh's own push — nothing should downgrade it on
-  # its own; only a fresh state change (a new prompt, or the session ending)
-  # supersedes "done".
-  sleep 0.5
-  result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
-  [[ "$result" == *"$(tab_pulse_done_glyph)"* ]]
-}
-
-@test "the real daemon shows the agent-count glyph while a subagent is running, overriding done" {
+@test "the real daemon shows the agent-count glyph while a subagent is running, overriding a finished (idle) main state" {
   # End-to-end version of the exact bug reported live: main turn Stopped
-  # (done) while a Task-tool subagent is still going.
+  # while a Task-tool subagent is still going.
   run_claude_state working
   sleep 0.2
-  run_claude_state done
+  run_claude_state idle
   run_claude_state agent_start
   sleep 0.3
   result="$(tab_pulse_tmux show-option -w -t "$TEST_WINDOW" -v @tab_pulse)"
   [[ "$result" == *"$(tab_pulse_agent_glyph)1"* ]]
-  [[ "$result" != *"$(tab_pulse_done_glyph)"* ]]
+  [[ "$result" != *"$(tab_pulse_idle_glyph)"* ]]
 
   run_claude_state agent_stop
   sleep 0.3
