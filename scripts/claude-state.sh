@@ -18,7 +18,7 @@ if [ -z "${TMUX_PANE:-}" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-# shellcheck source=./helpers.sh
+# shellcheck source=scripts/helpers.sh
 . "$SCRIPT_DIR/helpers.sh"
 
 state="${1:-}"
@@ -46,9 +46,7 @@ esac
 # finish before the daemon ever notices it started.
 win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)"
 if [ -n "$win" ]; then
-  priority="$(tab_pulse_window_priority "$win")"
-  glyph="$(tab_pulse_glyph_for_priority "$priority")"
-  tmux set-option -w -t "$win" @tab_pulse "$glyph" >/dev/null 2>&1
+  tab_pulse_publish_window "$win"
   tmux refresh-client -S >/dev/null 2>&1
 fi
 

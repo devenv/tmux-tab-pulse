@@ -5,6 +5,11 @@
 # Every knob is a tmux option under the @tab-pulse-* namespace, so users can
 # retune behavior without editing scripts (`set -g @tab-pulse-interval 300`).
 
+# Resolved from THIS file's own location (not the caller's), since helpers.sh
+# is sourced by scripts that may live elsewhere in principle — needed so
+# tab_pulse_publish_window below can find classify.awk reliably.
+TAB_PULSE_HELPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
 # tmux_get <option> <default>
 # Reads a global tmux option, falling back to <default> if unset/empty.
 tmux_get() {
@@ -125,81 +130,50 @@ tab_pulse_lock_dir() {
   printf '%s' "${TMPDIR:-/tmp}/tmux-tab-pulse-$(id -u)-${lock_key}.lock"
 }
 
-# word_in_list <word> <space-separated-list>
-word_in_list() {
-  local word="$1" list="$2" item
-  for item in $list; do
-    [ "$item" = "$word" ] && return 0
-  done
-  return 1
-}
+# tab_pulse_publish_window <window_id>
+# Classifies every pane in <window_id> RIGHT NOW via classify.awk (the exact
+# same logic daemon.sh's bulk sweep uses — see that file) and writes the
+# result directly to the window's @tab_pulse option, unconditionally (no
+# change-detection: statefile is /dev/null, so classify.awk always emits a
+# WIN line rather than only-on-change, since this caller has no previous-tick
+# snapshot of its own to compare against — it wants "the current glyph",
+# every time it's called).
+#
+# Used by claude-state.sh for its immediate, single-window push right after
+# a hook fires — cheap enough there since it only ever scopes to one
+# window's panes, unlike the daemon's server-wide sweep. Kept as ONE
+# implementation (this) rather than a second hand-written priority
+# calculation, so the two can never drift out of sync with each other.
+tab_pulse_publish_window() {
+  local win="$1"
+  local shells ignores detect
+  shells="$(tab_pulse_shells)"
+  ignores="$(tab_pulse_ignore_commands)"
+  if tab_pulse_process_detection_enabled; then detect=on; else detect=off; fi
 
-# Priority scale shared by daemon.sh's bulk aggregator and the single-window
-# helper below: 5=claude-working 4=claude-attention 3=process 2=claude-idle
-# 1=idle. Higher wins when aggregating panes within one window.
+  # No frame counter here (this is a one-off push, not an animation tick) —
+  # the first spinner frame is used as a static placeholder; the daemon's
+  # own next tick takes over actually animating it.
+  local frames frame
+  read -r -a frames <<<"$(tab_pulse_spinner_frames)"
+  frame="${frames[0]:-*}"
 
-# tab_pulse_priority_for_claude_state <state>
-tab_pulse_priority_for_claude_state() {
-  case "$1" in
-  working) printf '5' ;;
-  attention) printf '4' ;;
-  *) printf '2' ;; # any other/unknown Claude state = claude-idle
-  esac
-}
+  local aggregated kind a b
+  aggregated="$(tmux list-panes -t "$win" -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{@tab_pulse_state}\t#{@tab_pulse_ts}' 2>/dev/null \
+    | LC_ALL=C awk -F $'\t' \
+      -v shells="$shells" -v ignores="$ignores" -v detect="$detect" \
+      -v working_style="$(tab_pulse_working_style)" -v working_frame="$frame" \
+      -v attention_glyph="$(tab_pulse_attention_glyph)" -v attention_style="$(tab_pulse_attention_style)" \
+      -v process_glyph="$(tab_pulse_process_glyph)" -v process_style="$(tab_pulse_process_style)" \
+      -v idle_glyph="$(tab_pulse_idle_glyph)" -v statefile="/dev/null" -v statefile_new="/dev/null" \
+      -v claude_version_pattern="$(tab_pulse_claude_version_pattern)" \
+      -v stale_seconds="$(tab_pulse_working_stale_seconds)" -v now="$(date +%s)" \
+      -f "$TAB_PULSE_HELPERS_DIR/classify.awk")"
 
-# tab_pulse_priority_for_process <cmd>
-tab_pulse_priority_for_process() {
-  local cmd="$1"
-  if tab_pulse_process_detection_enabled \
-    && ! word_in_list "$cmd" "$(tab_pulse_shells)" \
-    && ! word_in_list "$cmd" "$(tab_pulse_ignore_commands)"; then
-    printf '3'
-  else
-    printf '1'
-  fi
-}
-
-# tab_pulse_window_priority <window_id>
-# Aggregates every pane currently in <window_id> into a single priority
-# number. Used for the immediate, single-window push from claude-state.sh —
-# cheap enough there since it only ever scopes to one window's panes, unlike
-# the daemon's server-wide sweep.
-tab_pulse_window_priority() {
-  local win="$1" best=1 cmd state pr
-  local version_pattern
-  version_pattern="$(tab_pulse_claude_version_pattern)"
-  while IFS=$'\t' read -r cmd state; do
-    [ -n "$cmd" ] || continue
-    if [ -n "$state" ]; then
-      pr="$(tab_pulse_priority_for_claude_state "$state")"
-    elif printf '%s' "$cmd" | grep -Eq "$version_pattern"; then
-      pr=2 # looks like Claude Code's own version-as-command-name; see helper doc
-    else
-      pr="$(tab_pulse_priority_for_process "$cmd")"
-    fi
-    [ "$pr" -gt "$best" ] && best="$pr"
-  done < <(tmux list-panes -t "$win" -F $'#{pane_current_command}\t#{@tab_pulse_state}' 2>/dev/null)
-  printf '%s' "$best"
-}
-
-# tab_pulse_glyph_for_priority <priority> [working-glyph]
-# [working-glyph] lets a caller with an animated frame counter (daemon.sh)
-# pass the current frame; callers without one (claude-state.sh's one-off
-# instant push) get the first spinner frame as a static placeholder — the
-# daemon's own next tick takes over animating it.
-tab_pulse_glyph_for_priority() {
-  local pr="$1" working_glyph="${2:-}"
-  case "$pr" in
-  5)
-    if [ -z "$working_glyph" ]; then
-      local frames
-      read -r -a frames <<<"$(tab_pulse_spinner_frames)"
-      working_glyph="${frames[0]:-*}"
-    fi
-    printf '%s%s#[default]' "$(tab_pulse_working_style)" "$working_glyph"
-    ;;
-  4) printf '%s%s#[default]' "$(tab_pulse_attention_style)" "$(tab_pulse_attention_glyph)" ;;
-  3) printf '%s%s#[default]' "$(tab_pulse_process_style)" "$(tab_pulse_process_glyph)" ;;
-  *) printf '%s' "$(tab_pulse_idle_glyph)" ;;
-  esac
+  while IFS=$'\t' read -r kind a b; do
+    case "$kind" in
+    CLEAR) tmux set-option -pu -t "$a" @tab_pulse_state >/dev/null 2>&1 ;;
+    WIN) tmux set-option -w -t "$a" @tab_pulse "$b" >/dev/null 2>&1 ;;
+    esac
+  done <<<"$aggregated"
 }
